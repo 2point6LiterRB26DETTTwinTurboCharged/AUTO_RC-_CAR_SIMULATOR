@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiDAR Autonomous Vehicle Simulator</title>
+    <style>
+        :root {
+            --accent: #6366f1;
+            --accent-hover: #4f46e5;
+            --accent-glow: rgba(99, 102, 241, 0.35);
+            
+            /* Dark Theme Defaults */
+            --bg-gradient: radial-gradient(circle at 50% 15%, #1e1e2d 0%, #0d0f14 100%);
+            --panel-bg: rgba(22, 27, 38, 0.65);
+            --panel-border: rgba(255, 255, 255, 0.12);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --card-hover-border: rgba(255, 255, 255, 0.25);
+            --icon-bg: rgba(13, 17, 23, 0.7);
+            --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+        }
+
+        [data-theme="light"] {
+            --bg-gradient: radial-gradient(circle at 50% 15%, #f8fafc 0%, #e2e8f0 100%);
+            --panel-bg: rgba(255, 255, 255, 0.75);
+            --panel-border: rgba(0, 0, 0, 0.1);
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --card-hover-border: rgba(0, 0, 0, 0.2);
+            --icon-bg: rgba(241, 245, 249, 0.9);
+            --shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.08);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        body {
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            position: relative;
+        }
+
+        /* --- TOP THEME BAR --- */
+        .top-toolbar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--panel-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--panel-border);
+            padding: 8px 16px;
+            border-radius: 30px;
+            box-shadow: var(--shadow);
+            z-index: 100;
+        }
+
+        .toolbar-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .color-picker-wrapper {
+            position: relative;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            overflow: hidden;
+            border: 2px solid var(--panel-border);
+            cursor: pointer;
+        }
+
+        .color-picker-wrapper input[type="color"] {
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            cursor: pointer;
+            border: none;
+        }
+
+        .theme-toggle-btn {
+            background: none;
+            border: none;
+            font-size: 1.1rem;
+            cursor: pointer;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            color: var(--text-main);
+        }
+
+        /* --- CONTAINER & GLASS CARDS --- */
+        .container {
+            max-width: 900px;
+            width: 100%;
+            text-align: center;
+            z-index: 10;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(99, 102, 241, 0.12);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            padding: 6px 18px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            margin-bottom: 24px;
+            letter-spacing: 0.5px;
+            backdrop-filter: blur(8px);
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 800;
+            color: var(--text-main);
+            margin-bottom: 16px;
+            line-height: 1.2;
+            letter-spacing: -0.5px;
+        }
+
+        p.subtitle {
+            font-size: 1.125rem;
+            color: var(--text-muted);
+            max-width: 650px;
+            margin: 0 auto 48px auto;
+            line-height: 1.6;
+        }
+
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 28px;
+            margin-bottom: 40px;
+        }
+
+        .mode-card {
+            background: var(--panel-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--panel-border);
+            border-radius: 20px;
+            padding: 36px 28px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            position: relative;
+            box-shadow: var(--shadow);
+        }
+
+        .mode-card:hover {
+            transform: translateY(-6px);
+            border-color: var(--accent);
+            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.25), 0 0 24px var(--accent-glow);
+        }
+
+        .icon-wrapper {
+            width: 70px;
+            height: 70px;
+            background: var(--icon-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            margin-bottom: 22px;
+        }
+
+        .mode-card:hover .icon-wrapper {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .mode-card h3 {
+            font-size: 1.35rem;
+            color: var(--text-main);
+            margin-bottom: 12px;
+            font-weight: 700;
+        }
+
+        .mode-card p {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            margin-bottom: 28px;
+            line-height: 1.55;
+            flex-grow: 1;
+        }
+
+        .btn-launch {
+            width: 100%;
+            padding: 14px 22px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            cursor: pointer;
+            border: none;
+            outline: none;
+            color: #ffffff;
+            background: var(--accent);
+            box-shadow: 0 4px 16px var(--accent-glow);
+        }
+
+        .btn-launch:hover {
+            background: var(--accent-hover);
+            transform: scale(1.02);
+            box-shadow: 0 6px 22px var(--accent-glow);
+        }
+
+        .btn-launch span {
+            transition: transform 0.2s ease;
+        }
+
+        .btn-launch:hover span {
+            transform: translateX(4px);
+        }
+
+        footer {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 20px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="top-toolbar">
+        <div class="toolbar-group">
+            <span>Accent</span>
+            <div class="color-picker-wrapper">
+                <input type="color" id="accentPicker" value="#6366f1">
+            </div>
+        </div>
+        <div style="width: 1px; height: 16px; background: var(--panel-border);"></div>
+        <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle Light/Dark Theme">🌙</button>
+    </div>
+
+    <div class="container">
+        <div class="hero-badge">⚡ Real-Time Autonomous Navigation</div>
+        <h1>LiDAR Vehicle Simulator</h1>
+        <p class="subtitle">Simulate ToF raycasting, reactive obstacle avoidance, dynamic path planning, and real-time SLAM point-cloud mapping.</p>
+
+        <div class="card-grid">
+            <div class="mode-card">
+                <div class="icon-wrapper">🗺️</div>
+                <h3>2D World & SLAM Map</h3>
+                <p>Interactive top-down view with real-time point-cloud mapping, panning, zooming, and waypoint placement.</p>
+                <a href="/2d" class="btn-launch">
+                    Launch 2D Simulator <span>→</span>
+                </a>
+            </div>
+
+            <div class="mode-card">
+                <div class="icon-wrapper">🌐</div>
+                <h3>3D Plane Visualizer</h3>
+                <p>Immersive Three.js environment with 3D path visualization, obstacle modification, and directional vehicle tracking.</p>
+                <a href="/3d" class="btn-launch">
+                    Launch 3D Visualizer <span>→</span>
+                </a>
+            </div>
+        </div>
+
+        <footer>Python Flask • Three.js • Canvas API • NumPy Autonomous Navigation</footer>
+    </div>
+
+    <script>
+        const themeToggleBtn = document.getElementById('themeToggleBtn');
+        const accentPicker = document.getElementById('accentPicker');
+        const root = document.documentElement;
+
+        // Load saved theme and accent
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        const savedAccent = localStorage.getItem('accent') || '#6366f1';
+
+        function applyTheme(theme) {
+            root.setAttribute('data-theme', theme);
+            themeToggleBtn.innerText = theme === 'dark' ? '🌙' : '☀️';
+            localStorage.setItem('theme', theme);
+        }
+
+        function applyAccent(color) {
+            root.style.setProperty('--accent', color);
+            // Calculate hover color dynamically
+            root.style.setProperty('--accent-hover', color);
+            root.style.setProperty('--accent-glow', color + '55');
+            accentPicker.value = color;
+            localStorage.setItem('accent', color);
+        }
+
+        applyTheme(savedTheme);
+        applyAccent(savedAccent);
+
+        themeToggleBtn.addEventListener('click', () => {
+            const currentTheme = root.getAttribute('data-theme');
+            applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
+        });
+
+        accentPicker.addEventListener('input', (e) => {
+            applyAccent(e.target.value);
+        });
+    </script>
+</body>
+</html>

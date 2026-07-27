@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D RC Car LiDAR Simulator</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #0e1117; color: #ffffff; display: flex; height: 100vh; overflow: hidden; }
+        .sidebar { width: 360px; background-color: #161b22; padding: 16px; border-right: 1px solid #30363d; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+        .sidebar h2 { font-size: 1rem; color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 4px; }
+        .control-group { display: flex; flex-direction: column; gap: 4px; }
+        .control-group label { font-size: 0.8rem; color: #c9d1d9; display: flex; justify-content: space-between; }
+        .control-group input, .control-group select { width: 100%; accent-color: #1f6feb; background: #0d1117; color: white; border: 1px solid #30363d; padding: 5px; border-radius: 4px; font-size: 0.85rem; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .btn { background-color: #238636; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; text-decoration: none; text-align: center; }
+        .btn:hover { background-color: #2ea043; }
+        .btn-reset { background-color: #da3633; }
+        .btn-reset:hover { background-color: #f85149; }
+        .btn-play { background-color: #1f6feb; }
+        .btn-play:hover { background-color: #388bfd; }
+        .btn-secondary { background-color: #30363d; }
+        .btn-secondary:hover { background-color: #8b949e; }
+        .btn-nav { background-color: #8957e5; color: white; display: block; margin-bottom: 8px; }
+        .btn-nav:hover { background-color: #a371f7; }
+        
+        .drag-box {
+            background-color: #21262d;
+            border: 2px dashed #58a6ff;
+            color: #58a6ff;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 0.85rem;
+            font-weight: bold;
+            cursor: grab;
+            user-select: none;
+            transition: background 0.2s;
+        }
+        .drag-box:active { cursor: grabbing; background-color: #30363d; }
+
+        .main-content { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+        .telemetry-bar { 
+        display: grid; 
+        grid-template-columns: repeat(5, 1fr); 
+        gap: 10px; 
+        height: 68px; 
+        min-height: 68px; 
+        max-height: 68px; 
+        flex-shrink: 0;
+        }
+        .metric-card { 
+            background-color: #161b22; 
+            border: 1px solid #30363d; 
+            border-radius: 6px; 
+            padding: 8px 10px; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center;
+            overflow: hidden;
+        }
+        .metric-card span.title { font-size: 0.68rem; color: #8b949e; text-transform: uppercase; white-space: nowrap; }
+        .metric-card span.value { 
+            font-size: 0.88rem; 
+            font-weight: bold; 
+            color: #58a6ff; 
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+        }
+        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; position: relative; }
+        .card h3 { font-size: 0.9rem; color: #f0f6fc; }
+        canvas { background-color: #0d1117; border: 1px solid #30363d; border-radius: 4px; cursor: crosshair; }
+        .canvas-hint { position: absolute; bottom: 18px; left: 20px; background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; color: #8b949e; pointer-events: none; }
+        .button-row { display: flex; gap: 8px; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <a href="/" class="btn btn-nav">🏠 Home / Landing</a>
+        <a href="/3d" class="btn btn-nav">🌐 Switch to 3D View →</a>
+
+        <h2>🛠️ Sensor Hardware & Control</h2>
+        <div class="control-group">
+            <label>LiDAR Mode</label>
+            <select id="sensor_mode">
+                <option value="360_sweep">360° Continuous Raycast</option>
+                <option value="4_sensors">4 Discrete ToF Sensors</option>
+            </select>
+        </div>
+
+        <div class="control-group" id="ray_count_group">
+            <label>Sensor / Ray Count: <span id="val-beams">120</span></label>
+            <input type="range" id="num_beams" min="8" max="360" step="4" value="120">
+        </div>
+
+        <div class="control-group">
+            <label>Driving Speed: <span id="val-speed">0.5</span></label>
+            <input type="range" id="speed" min="0.1" max="1.5" step="0.1" value="0.5">
+        </div>
+
+        <div class="control-group">
+            <label>Max Distance (m): <span id="val-range">5.0</span></label>
+            <input type="range" id="max_range" min="2.0" max="10.0" step="0.5" value="5.0">
+        </div>
+
+        <h2>🗺️ Map View & Zoom</h2>
+        <div class="control-group">
+            <label>Zoom Level: <span id="val-zoom">1.0x</span></label>
+            <input type="range" id="zoom_slider" min="0.5" max="4.0" step="0.1" value="1.0">
+        </div>
+        <div class="button-row">
+            <button class="btn btn-secondary" id="recenterBtn">Recenter View</button>
+            <button class="btn btn-reset" id="clearWaypointsBtn">Clear Path</button>
+        </div>
+
+        <h2>📦 Object / Obstacle Editor</h2>
+        <div class="drag-box" draggable="true" id="dragNewObs">
+            ➕ Drag me onto map to drop Obstacle
+        </div>
+
+        <div class="control-group">
+            <label>Selected Obstacle</label>
+            <select id="obs_select"></select>
+        </div>
+        <div class="grid-2">
+            <div class="control-group">
+                <label>Min X (m)</label>
+                <input type="number" id="obs_xmin" step="0.2">
+            </div>
+            <div class="control-group">
+                <label>Max X (m)</label>
+                <input type="number" id="obs_xmax" step="0.2">
+            </div>
+            <div class="control-group">
+                <label>Min Y (m)</label>
+                <input type="number" id="obs_ymin" step="0.2">
+            </div>
+            <div class="control-group">
+                <label>Max Y (m)</label>
+                <input type="number" id="obs_ymax" step="0.2">
+            </div>
+        </div>
+        <div class="button-row">
+            <button class="btn" id="updateObsBtn">Update Selected</button>
+            <button class="btn btn-secondary" id="addObsBtn">+ Add Default</button>
+            <button class="btn btn-reset" id="deleteObsBtn">Delete</button>
+        </div>
+
+        <div class="button-row" style="margin-top: 10px;">
+            <button class="btn btn-play" id="playBtn">Play ▶️</button>
+            <button class="btn" id="stepBtn">Step ⏭️</button>
+        </div>
+        <button class="btn btn-reset" id="resetBtn">Reset Environment</button>
+    </div>
+
+    <div class="main-content">
+        <div class="telemetry-bar">
+            <div class="metric-card"><span class="title">Status</span><span class="value" id="status-val">NOMINAL</span></div>
+            <div class="metric-card"><span class="title">Active Sensor Beams</span><span class="value" id="active-sensors-val">120</span></div>
+            <div class="metric-card"><span class="title">Waypoints</span><span class="value" id="waypoints-val">0</span></div>
+            <div class="metric-card"><span class="title">Closest Hit</span><span class="value" id="sensor-hit-val">0.00 m</span></div>
+            <div class="metric-card"><span class="title">Collisions</span><span class="value" id="collisions-val">0</span></div>
+        </div>
+
+        <div class="canvas-container">
+            <div class="card">
+                <h3>🌐 2D World View (Drag Obstacles | Click to set Path)</h3>
+                <canvas id="worldCanvas" width="500" height="500"></canvas>
+                <div class="canvas-hint">Drag Obstacle: Move | Shift+Drag: Pan View | Click: Set Path</div>
+            </div>
+
+            <div class="card">
+                <h3>🗺️ 2D SLAM Point-Cloud Map</h3>
+                <canvas id="mapCanvas" width="500" height="500"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const worldCanvas = document.getElementById('worldCanvas');
+        const mapCanvas = document.getElementById('mapCanvas');
+        const ctxWorld = worldCanvas.getContext('2d');
+        const ctxMap = mapCanvas.getContext('2d');
+
+        const CANVAS_SIZE = 500;
+        const ROOM_SIZE = 10.0;
+
+        let zoomLevel = 1.0;
+        let panX = 0, panY = 0;
+        
+        let isPanning = false;
+        let startPanX = 0, startPanY = 0;
+
+        let waypoints = [[8.5, 8.5]];
+        let currentWaypointIdx = 0;
+        let obstacles = [];
+        let selectedObsId = null;
+
+        // Flags to suppress waypoint generation when dragging or dropping
+        let isDraggingObstacle = false;
+        let wasDragging = false; 
+        let draggedObs = null;
+        let dragOffsetMeterX = 0;
+        let dragOffsetMeterY = 0;
+
+        let isAutoPlaying = false;
+        let animationInterval = null;
+
+        function bindSlider(id, labelId, suffix = '') {
+            const input = document.getElementById(id);
+            const label = document.getElementById(labelId);
+            input.addEventListener('input', () => label.innerText = input.value + suffix);
+        }
+
+        bindSlider('num_beams', 'val-beams');
+        bindSlider('speed', 'val-speed');
+        bindSlider('max_range', 'val-range');
+        bindSlider('zoom_slider', 'val-zoom', 'x');
+
+        document.getElementById('sensor_mode').addEventListener('change', (e) => {
+            const rayGroup = document.getElementById('ray_count_group');
+            if (e.target.value === '4_sensors') {
+                rayGroup.style.opacity = '0.4';
+                rayGroup.style.pointerEvents = 'none';
+            } else {
+                rayGroup.style.opacity = '1.0';
+                rayGroup.style.pointerEvents = 'auto';
+            }
+            runStep();
+        });
+
+        function toPixelX(mX) {
+            const basePx = (mX / ROOM_SIZE) * CANVAS_SIZE;
+            return (basePx - CANVAS_SIZE / 2) * zoomLevel + CANVAS_SIZE / 2 + panX;
+        }
+
+        function toPixelY(mY) {
+            const basePx = CANVAS_SIZE - ((mY / ROOM_SIZE) * CANVAS_SIZE);
+            return (basePx - CANVAS_SIZE / 2) * zoomLevel + CANVAS_SIZE / 2 + panY;
+        }
+
+        function toMeterX(pxX) {
+            const unpanned = pxX - panX - CANVAS_SIZE / 2;
+            const basePx = unpanned / zoomLevel + CANVAS_SIZE / 2;
+            return (basePx / CANVAS_SIZE) * ROOM_SIZE;
+        }
+
+        function toMeterY(pxY) {
+            const unpanned = pxY - panY - CANVAS_SIZE / 2;
+            const basePx = unpanned / zoomLevel + CANVAS_SIZE / 2;
+            return ((CANVAS_SIZE - basePx) / CANVAS_SIZE) * ROOM_SIZE;
+        }
+
+        // Wheel Zoom
+        worldCanvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+            zoomLevel = Math.max(0.5, Math.min(4.0, zoomLevel * zoomFactor));
+            document.getElementById('zoom_slider').value = zoomLevel.toFixed(1);
+            document.getElementById('val-zoom').innerText = zoomLevel.toFixed(1) + 'x';
+            runStep();
+        });
+
+        document.getElementById('zoom_slider').addEventListener('input', (e) => {
+            zoomLevel = parseFloat(e.target.value);
+            runStep();
+        });
+
+        // HTML5 Drag & Drop New Obstacle from Sidebar
+        const dragBox = document.getElementById('dragNewObs');
+        dragBox.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', 'new_obstacle');
+        });
+
+        worldCanvas.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+
+        worldCanvas.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            wasDragging = true; // Prevent waypoint click triggered right after drop
+
+            const rect = worldCanvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            const mX = toMeterX(clickX);
+            const mY = toMeterY(clickY);
+
+            const newId = Date.now();
+            const width = 1.2;
+            const height = 1.2;
+
+            obstacles.push({
+                id: newId,
+                x_min: Math.max(0, parseFloat((mX - width/2).toFixed(2))),
+                x_max: Math.min(ROOM_SIZE, parseFloat((mX + width/2).toFixed(2))),
+                y_min: Math.max(0, parseFloat((mY - height/2).toFixed(2))),
+                y_max: Math.min(ROOM_SIZE, parseFloat((mY + height/2).toFixed(2)))
+            });
+
+            selectedObsId = newId;
+            await syncObstacles();
+            populateObjectEditor();
+            runStep();
+
+            setTimeout(() => { wasDragging = false; }, 100);
+        });
+
+        // Mouse Events for Canvas Dragging
+        worldCanvas.addEventListener('mousedown', (e) => {
+            wasDragging = false;
+            const rect = worldCanvas.getBoundingClientRect();
+            const mousePxX = e.clientX - rect.left;
+            const mousePxY = e.clientY - rect.top;
+            const mX = toMeterX(mousePxX);
+            const mY = toMeterY(mousePxY);
+
+            if (e.shiftKey || e.button === 1) {
+                isPanning = true;
+                startPanX = e.clientX - panX;
+                startPanY = e.clientY - panY;
+                return;
+            }
+
+            // Check if clicked on an existing obstacle
+            let clickedObs = obstacles.find(obs => 
+                mX >= obs.x_min && mX <= obs.x_max && mY >= obs.y_min && mY <= obs.y_max
+            );
+
+            if (clickedObs) {
+                isDraggingObstacle = true;
+                draggedObs = clickedObs;
+                selectedObsId = clickedObs.id;
+                dragOffsetMeterX = mX - clickedObs.x_min;
+                dragOffsetMeterY = mY - clickedObs.y_min;
+                populateObjectEditor();
+            }
+        });
+
+        window.addEventListener('mousemove', async (e) => {
+            if (isPanning) {
+                wasDragging = true;
+                panX = e.clientX - startPanX;
+                panY = e.clientY - startPanY;
+                runStep();
+                return;
+            }
+
+            if (isDraggingObstacle && draggedObs) {
+                wasDragging = true;
+                const rect = worldCanvas.getBoundingClientRect();
+                const mousePxX = e.clientX - rect.left;
+                const mousePxY = e.clientY - rect.top;
+                const currentMX = toMeterX(mousePxX);
+                const currentMY = toMeterY(mousePxY);
+
+                const width = draggedObs.x_max - draggedObs.x_min;
+                const height = draggedObs.y_max - draggedObs.y_min;
+
+                let newXmin = currentMX - dragOffsetMeterX;
+                let newYmin = currentMY - dragOffsetMeterY;
+
+                newXmin = Math.max(0, Math.min(ROOM_SIZE - width, newXmin));
+                newYmin = Math.max(0, Math.min(ROOM_SIZE - height, newYmin));
+
+                draggedObs.x_min = parseFloat(newXmin.toFixed(2));
+                draggedObs.x_max = parseFloat((newXmin + width).toFixed(2));
+                draggedObs.y_min = parseFloat(newYmin.toFixed(2));
+                draggedObs.y_max = parseFloat((newYmin + height).toFixed(2));
+
+                populateObjectEditor();
+                await syncObstacles();
+                runStep();
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isPanning = false;
+            if (isDraggingObstacle) {
+                isDraggingObstacle = false;
+                draggedObs = null;
+                // Keep wasDragging true briefly so click handler ignores this release
+                setTimeout(() => { wasDragging = false; }, 100);
+            }
+        });
+
+        // Click Event for Adding Waypoints
+        worldCanvas.addEventListener('click', (e) => {
+            // Ignore click if user was panning or dragging an obstacle
+            if (wasDragging || isDraggingObstacle || isPanning) return;
+
+            const rect = worldCanvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            const mX = toMeterX(clickX);
+            const mY = toMeterY(clickY);
+
+            // Don't add waypoint if clicked directly on top of an obstacle
+            let clickedObs = obstacles.find(obs => 
+                mX >= obs.x_min && mX <= obs.x_max && mY >= obs.y_min && mY <= obs.y_max
+            );
+
+            if (!clickedObs && mX >= 0 && mX <= ROOM_SIZE && mY >= 0 && mY <= ROOM_SIZE) {
+                waypoints.push([parseFloat(mX.toFixed(2)), parseFloat(mY.toFixed(2))]);
+                runStep();
+            }
+        });
+
+        document.getElementById('recenterBtn').addEventListener('click', () => {
+            zoomLevel = 1.0; panX = 0; panY = 0;
+            document.getElementById('zoom_slider').value = 1.0;
+            document.getElementById('val-zoom').innerText = '1.0x';
+            runStep();
+        });
+
+        document.getElementById('clearWaypointsBtn').addEventListener('click', () => {
+            waypoints = []; currentWaypointIdx = 0; runStep();
+        });
+
+        function populateObjectEditor() {
+            const select = document.getElementById('obs_select');
+            select.innerHTML = '';
+            obstacles.forEach((obs, idx) => {
+                const opt = document.createElement('option');
+                opt.value = obs.id;
+                opt.innerText = `Obstacle #${idx + 1} (ID: ${obs.id})`;
+                if (obs.id === selectedObsId) opt.selected = true;
+                select.appendChild(opt);
+            });
+
+            const current = obstacles.find(o => o.id === selectedObsId) || obstacles[0];
+            if (current) {
+                selectedObsId = current.id;
+                document.getElementById('obs_xmin').value = current.x_min;
+                document.getElementById('obs_xmax').value = current.x_max;
+                document.getElementById('obs_ymin').value = current.y_min;
+                document.getElementById('obs_ymax').value = current.y_max;
+            }
+        }
+
+        document.getElementById('obs_select').addEventListener('change', (e) => {
+            selectedObsId = parseInt(e.target.value);
+            populateObjectEditor(); runStep();
+        });
+
+        document.getElementById('updateObsBtn').addEventListener('click', async () => {
+            const obs = obstacles.find(o => o.id === selectedObsId);
+            if (obs) {
+                obs.x_min = parseFloat(document.getElementById('obs_xmin').value);
+                obs.x_max = parseFloat(document.getElementById('obs_xmax').value);
+                obs.y_min = parseFloat(document.getElementById('obs_ymin').value);
+                obs.y_max = parseFloat(document.getElementById('obs_ymax').value);
+                await syncObstacles(); runStep();
+            }
+        });
+
+        document.getElementById('addObsBtn').addEventListener('click', async () => {
+            const newId = Date.now();
+            obstacles.push({ id: newId, x_min: 4.5, x_max: 5.5, y_min: 1.5, y_max: 2.5 });
+            selectedObsId = newId;
+            await syncObstacles(); populateObjectEditor(); runStep();
+        });
+
+        document.getElementById('deleteObsBtn').addEventListener('click', async () => {
+            obstacles = obstacles.filter(o => o.id !== selectedObsId);
+            selectedObsId = obstacles.length ? obstacles[0].id : null;
+            await syncObstacles(); populateObjectEditor(); runStep();
+        });
+
+        async function syncObstacles() {
+            await fetch('/api/obstacles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ obstacles })
+            });
+        }
+
+        async function runStep() {
+            const payload = {
+                speed: parseFloat(document.getElementById('speed').value),
+                num_beams: parseInt(document.getElementById('num_beams').value),
+                max_range: parseFloat(document.getElementById('max_range').value),
+                safety_margin: 1.2,
+                sensor_mode: document.getElementById('sensor_mode').value,
+                waypoints: waypoints,
+                current_waypoint_idx: currentWaypointIdx
+            };
+
+            try {
+                const response = await fetch('/api/step', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                
+                if (data.obstacles) obstacles = data.obstacles;
+                if (!selectedObsId && obstacles.length) selectedObsId = obstacles[0].id;
+                populateObjectEditor();
+
+                currentWaypointIdx = data.current_waypoint_idx;
+                document.getElementById('status-val').innerText = data.status;
+                document.getElementById('active-sensors-val').innerText = data.active_sensor_count;
+                document.getElementById('waypoints-val').innerText = `${currentWaypointIdx}/${waypoints.length}`;
+                document.getElementById('sensor-hit-val').innerText = (data.min_sensor_hit || 0.0).toFixed(2) + " m";
+                document.getElementById('collisions-val').innerText = data.collisions;
+
+                renderWorld(data);
+                renderMap(data);
+            } catch (err) {
+                console.error("Step execution error:", err);
+            }
+        }
+
+        async function resetSimulation() {
+            if (isAutoPlaying) togglePlay();
+            await fetch('/api/reset', { method: 'POST' });
+            runStep();
+        }
+
+        function togglePlay() {
+            isAutoPlaying = !isAutoPlaying;
+            const playBtn = document.getElementById('playBtn');
+            if (isAutoPlaying) {
+                playBtn.innerText = "Pause ⏸️";
+                playBtn.style.backgroundColor = "#d29922";
+                animationInterval = setInterval(runStep, 100);
+            } else {
+                playBtn.innerText = "Play ▶️";
+                playBtn.style.backgroundColor = "#1f6feb";
+                clearInterval(animationInterval);
+            }
+        }
+
+        function renderWorld(data) {
+            ctxWorld.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+            // Draw Boundary
+            ctxWorld.strokeStyle = '#30363d';
+            ctxWorld.lineWidth = 2;
+            ctxWorld.strokeRect(toPixelX(0), toPixelY(ROOM_SIZE), (ROOM_SIZE/ROOM_SIZE)*CANVAS_SIZE*zoomLevel, (ROOM_SIZE/ROOM_SIZE)*CANVAS_SIZE*zoomLevel);
+
+            // Draw Obstacles
+            data.obstacles.forEach(obs => {
+                const x = toPixelX(obs.x_min);
+                const y = toPixelY(obs.y_max);
+                const w = ((obs.x_max - obs.x_min) / ROOM_SIZE) * CANVAS_SIZE * zoomLevel;
+                const h = ((obs.y_max - obs.y_min) / ROOM_SIZE) * CANVAS_SIZE * zoomLevel;
+                
+                ctxWorld.fillStyle = (obs.id === selectedObsId) ? 'rgba(255, 120, 0, 0.85)' : 'rgba(139, 0, 0, 0.7)';
+                ctxWorld.fillRect(x, y, w, h);
+                ctxWorld.strokeStyle = (obs.id === selectedObsId) ? '#ffffff' : '#ff4d4d';
+                ctxWorld.strokeRect(x, y, w, h);
+            });
+
+            // Draw LiDAR Rays
+            ctxWorld.strokeStyle = 'rgba(0, 255, 255, 0.25)';
+            ctxWorld.lineWidth = 0.9;
+            const carPxX = toPixelX(data.car_x);
+            const carPxY = toPixelY(data.car_y);
+
+            data.all_rays.forEach(ray => {
+                ctxWorld.beginPath();
+                ctxWorld.moveTo(carPxX, carPxY);
+                ctxWorld.lineTo(toPixelX(ray.end_x), toPixelY(ray.end_y));
+                ctxWorld.stroke();
+            });
+
+            // Draw Target Path & Waypoints
+            if (waypoints.length > 0) {
+                ctxWorld.strokeStyle = '#ffbd2e';
+                ctxWorld.setLineDash([5, 5]);
+                ctxWorld.beginPath();
+                ctxWorld.moveTo(carPxX, carPxY);
+                waypoints.forEach((wp, idx) => {
+                    if (idx >= currentWaypointIdx) {
+                        ctxWorld.lineTo(toPixelX(wp[0]), toPixelY(wp[1]));
+                    }
+                });
+                ctxWorld.stroke();
+                ctxWorld.setLineDash([]);
+
+                waypoints.forEach((wp, idx) => {
+                    ctxWorld.fillStyle = idx === currentWaypointIdx ? '#ffbd2e' : 'rgba(255, 189, 46, 0.4)';
+                    ctxWorld.beginPath();
+                    ctxWorld.arc(toPixelX(wp[0]), toPixelY(wp[1]), idx === currentWaypointIdx ? 8 : 5, 0, Math.PI * 2);
+                    ctxWorld.fill();
+                });
+            }
+
+            // Draw RC Car Body
+            ctxWorld.fillStyle = 'red';
+            ctxWorld.beginPath();
+            ctxWorld.arc(carPxX, carPxY, 6 * zoomLevel, 0, Math.PI * 2);
+            ctxWorld.fill();
+
+            // Heading Vector Indicator
+            const arrowLen = 15 * zoomLevel;
+            const endX = carPxX + arrowLen * Math.cos(-data.car_heading);
+            const endY = carPxY + arrowLen * Math.sin(-data.car_heading);
+            ctxWorld.strokeStyle = 'red';
+            ctxWorld.lineWidth = 2;
+            ctxWorld.beginPath();
+            ctxWorld.moveTo(carPxX, carPxY);
+            ctxWorld.lineTo(endX, endY);
+            ctxWorld.stroke();
+        }
+
+        function renderMap(data) {
+            ctxMap.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            ctxMap.fillStyle = 'rgba(31, 111, 235, 0.5)';
+            data.map_points.forEach(pt => {
+                ctxMap.fillRect(toPixelX(pt.x), toPixelY(pt.y), 2, 2);
+            });
+
+            ctxMap.fillStyle = '#2ea043';
+            ctxMap.beginPath();
+            ctxMap.arc(toPixelX(data.car_x), toPixelY(data.car_y), 5, 0, Math.PI * 2);
+            ctxMap.fill();
+        }
+
+        document.getElementById('stepBtn').addEventListener('click', runStep);
+        document.getElementById('playBtn').addEventListener('click', togglePlay);
+        document.getElementById('resetBtn').addEventListener('click', resetSimulation);
+
+        runStep();
+    </script>
+</body>
+</html>
