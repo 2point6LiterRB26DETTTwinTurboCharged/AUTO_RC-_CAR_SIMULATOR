@@ -1,10 +1,14 @@
 import os
-import webbrowser
 import numpy as np
 from flask import Flask, jsonify, request, send_file
-from stable_baselines3 import PPO
+
+try:
+    from stable_baselines3 import PPO
+except Exception:  # pragma: no cover - optional dependency fallback
+    PPO = None
 
 app = Flask(__name__, static_folder=".", template_folder=".")
+PORT = int(os.environ.get("PORT", "5000"))
 
 # -------------------- INITIALIZE STATE --------------------
 DEFAULT_STATE = {
@@ -30,7 +34,7 @@ obstacles = [
 # Load RL model if present
 rl_model = None
 try:
-    if os.path.exists("ppo_rccar_model.zip") or os.path.exists("ppo_rccar_model"):
+    if PPO is not None and (os.path.exists("ppo_rccar_model.zip") or os.path.exists("ppo_rccar_model")):
         rl_model = PPO.load("ppo_rccar_model")
         print("🤖 Trained RL Model successfully loaded!")
 except Exception as e:
@@ -61,7 +65,7 @@ def cast_lidar_ray(x, y, angle, max_r, current_obstacles, room_size):
     return max_r, end_x, end_y
 
 def calculate_navigation(car_x, car_y, car_heading, waypoints, current_idx, lidar_distances, angles, speed, safety_margin, max_range):
-    """Calculates smoothed steering towards active waypoint with reactive obstacle avoidance."""
+    """Calculates smoothed steering towards active waypoint with dynamic skipping for close waypoints."""
     if not waypoints or current_idx >= len(waypoints):
         sim_state["status"] = "🎉 ALL WAYPOINTS REACHED!"
         return 0.0, 0.0, current_idx
@@ -71,15 +75,20 @@ def calculate_navigation(car_x, car_y, car_heading, waypoints, current_idx, lida
     dy = target[1] - car_y
     dist_to_target = np.hypot(dx, dy)
 
-    # Check if close enough to waypoint to advance
-    if dist_to_target < 0.6:
+    # Dynamic acceptance radius based on speed
+    acceptance_radius = max(0.25, speed * 0.4)
+
+    # Skip waypoints that are already too close or passed to avoid getting stuck in loops
+    while dist_to_target < acceptance_radius and current_idx < len(waypoints) - 1:
         current_idx += 1
-        if current_idx >= len(waypoints):
-            sim_state["status"] = "🎉 ALL WAYPOINTS REACHED!"
-            return 0.0, 0.0, current_idx
         target = waypoints[current_idx]
         dx = target[0] - car_x
         dy = target[1] - car_y
+        dist_to_target = np.hypot(dx, dy)
+
+    if current_idx >= len(waypoints) - 1 and dist_to_target < acceptance_radius:
+        sim_state["status"] = "🎉 ALL WAYPOINTS REACHED!"
+        return 0.0, 0.0, current_idx
 
     target_angle = np.arctan2(dy, dx)
     heading_diff = target_angle - car_heading
@@ -110,6 +119,10 @@ def calculate_navigation(car_x, car_y, car_heading, waypoints, current_idx, lida
 def landing():
     return send_file("landing.html")
 
+@app.route("/health")
+def health_check():
+    return jsonify({"status": "ok"})
+
 @app.route("/2d")
 def main_app():
     return send_file("index.html")
@@ -139,57 +152,60 @@ def update_obstacles():
 
 @app.route("/api/step", methods=["POST"])
 def step():
-    global sim_state, obstacles
-
     data = request.json or {}
     speed = float(data.get("speed", 0.5))
     num_beams = int(data.get("num_beams", 120))
     max_range = float(data.get("max_range", 5.0))
     safety_margin = float(data.get("safety_margin", 1.2))
     sensor_mode = data.get("sensor_mode", "360_sweep")
-    room_size = float(data.get("room_size", 10.0))
+    waypoints = data.get("waypoints", sim_state["waypoints"])
+    sim_state["waypoints"] = waypoints
+    sim_state["current_waypoint_idx"] = int(data.get("current_waypoint_idx", sim_state["current_waypoint_idx"]))
 
-    if "waypoints" in data:
-        sim_state["waypoints"] = data["waypoints"]
-    
-    if "current_waypoint_idx" in data:
-        sim_state["current_waypoint_idx"] = data["current_waypoint_idx"]
+    room_size = 10.0
 
+    # Sensor Angle Configurations
     if sensor_mode == "4_sensors":
-        angles = np.array([0.0, np.pi / 4, -np.pi / 4, np.pi])
+        angles = np.array([0.0, np.pi / 2, np.pi, -np.pi / 2])
     else:
-        angles = np.linspace(-np.pi, np.pi, num_beams)
+        angles = np.linspace(-np.pi, np.pi, num_beams, endpoint=False)
 
     lidar_distances = []
     all_rays = []
 
-    for a in angles:
-        global_angle = sim_state["car_heading"] + a
-        dist, end_x, end_y = cast_lidar_ray(
-            sim_state["car_x"], sim_state["car_y"], global_angle, max_range, obstacles, room_size
+    for angle in angles:
+        ray_angle = sim_state["car_heading"] + angle
+        dist, hit_x, hit_y = cast_lidar_ray(
+            sim_state["car_x"], sim_state["car_y"], ray_angle, max_range, obstacles, room_size
         )
         lidar_distances.append(dist)
-        all_rays.append({"end_x": float(end_x), "end_y": float(end_y)})
-        
-        if dist < max_range:
-            sim_state["map_points"].append({"x": float(end_x), "y": float(end_y)})
+        all_rays.append({"angle": ray_angle, "dist": dist, "end_x": hit_x, "end_y": hit_y})
 
-    # Calculate next step motion
-    move_speed, steering_angle, next_wp_idx = calculate_navigation(
-        sim_state["car_x"], sim_state["car_y"], sim_state["car_heading"],
-        sim_state["waypoints"], sim_state["current_waypoint_idx"],
-        np.array(lidar_distances), angles, speed, safety_margin, max_range
+        if dist < max_range * 0.98:
+            sim_state["map_points"].append({"x": round(hit_x, 2), "y": round(hit_y, 2)})
+
+    if len(sim_state["map_points"]) > 1200:
+        sim_state["map_points"] = sim_state["map_points"][-1200:]
+
+    lidar_distances = np.array(lidar_distances)
+
+    calc_speed, steering, updated_wp_idx = calculate_navigation(
+        sim_state["car_x"],
+        sim_state["car_y"],
+        sim_state["car_heading"],
+        sim_state["waypoints"],
+        sim_state["current_waypoint_idx"],
+        lidar_distances,
+        angles,
+        speed,
+        safety_margin,
+        max_range,
     )
 
-    sim_state["current_waypoint_idx"] = next_wp_idx
-    sim_state["car_heading"] += steering_angle
-    sim_state["car_x"] += move_speed * np.cos(sim_state["car_heading"]) * 0.2
-    sim_state["car_y"] += move_speed * np.sin(sim_state["car_heading"]) * 0.2
-
-    # Collision check with boundary walls
-    if sim_state["car_x"] <= 0.5 or sim_state["car_x"] >= (room_size - 0.5) or \
-       sim_state["car_y"] <= 0.5 or sim_state["car_y"] >= (room_size - 0.5):
-        sim_state["collisions"] += 1
+    sim_state["current_waypoint_idx"] = updated_wp_idx
+    sim_state["car_heading"] += steering
+    sim_state["car_x"] += calc_speed * np.cos(sim_state["car_heading"]) * 0.2
+    sim_state["car_y"] += calc_speed * np.sin(sim_state["car_heading"]) * 0.2
 
     sim_state["car_x"] = float(np.clip(sim_state["car_x"], 0.5, room_size - 0.5))
     sim_state["car_y"] = float(np.clip(sim_state["car_y"], 0.5, room_size - 0.5))
@@ -205,15 +221,9 @@ def step():
         "map_points": sim_state["map_points"],
         "obstacles": obstacles,
         "status": sim_state["status"],
-        "min_sensor_hit": float(np.min(lidar_distances)) if len(lidar_distances) > 0 else 0.0,
+        "min_sensor_hit": float(np.min(lidar_distances)),
         "collisions": sim_state["collisions"]
     })
 
 if __name__ == "__main__":
-    port = 5000
-    url = f"http://127.0.0.1:{port}"
-
-    if not os.environ.get("WERKZEUG_RUN_MAIN"):
-        webbrowser.open(url)
-
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=PORT, debug=False)

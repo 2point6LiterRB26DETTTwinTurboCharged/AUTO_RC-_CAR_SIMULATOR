@@ -7,7 +7,7 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background-color: #0e1117; color: #ffffff; display: flex; height: 100vh; overflow: hidden; }
-        .sidebar { width: 360px; background-color: #161b22; padding: 16px; border-right: 1px solid #30363d; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+        .sidebar { width: 360px; background-color: #161b22; padding: 16px; border-right: 1px solid #30363d; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; flex-shrink: 0; }
         .sidebar h2 { font-size: 1rem; color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 4px; }
         .control-group { display: flex; flex-direction: column; gap: 4px; }
         .control-group label { font-size: 0.8rem; color: #c9d1d9; display: flex; justify-content: space-between; }
@@ -40,14 +40,16 @@
         .drag-box:active { cursor: grabbing; background-color: #30363d; }
 
         .main-content { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+        
+        /* Fixed Telemetry Bar height prevents status text from pushing down viewport */
         .telemetry-bar { 
-        display: grid; 
-        grid-template-columns: repeat(5, 1fr); 
-        gap: 10px; 
-        height: 68px; 
-        min-height: 68px; 
-        max-height: 68px; 
-        flex-shrink: 0;
+            display: grid; 
+            grid-template-columns: repeat(5, 1fr); 
+            gap: 10px; 
+            height: 68px; 
+            min-height: 68px; 
+            max-height: 68px; 
+            flex-shrink: 0;
         }
         .metric-card { 
             background-color: #161b22; 
@@ -68,6 +70,8 @@
             overflow: hidden; 
             text-overflow: ellipsis; 
         }
+
+        .canvas-container { display: flex; gap: 16px; flex-wrap: wrap; }
         .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; position: relative; }
         .card h3 { font-size: 0.9rem; color: #f0f6fc; }
         canvas { background-color: #0d1117; border: 1px solid #30363d; border-radius: 4px; cursor: crosshair; }
@@ -186,6 +190,7 @@
 
         const CANVAS_SIZE = 500;
         const ROOM_SIZE = 10.0;
+        const MIN_WAYPOINT_DIST = 0.35; // Minimum 0.35m gap between waypoints
 
         let zoomLevel = 1.0;
         let panX = 0, panY = 0;
@@ -198,7 +203,6 @@
         let obstacles = [];
         let selectedObsId = null;
 
-        // Flags to suppress waypoint generation when dragging or dropping
         let isDraggingObstacle = false;
         let wasDragging = false; 
         let draggedObs = null;
@@ -281,7 +285,7 @@
         worldCanvas.addEventListener('drop', async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            wasDragging = true; // Prevent waypoint click triggered right after drop
+            wasDragging = true;
 
             const rect = worldCanvas.getBoundingClientRect();
             const clickX = e.clientX - rect.left;
@@ -326,7 +330,6 @@
                 return;
             }
 
-            // Check if clicked on an existing obstacle
             let clickedObs = obstacles.find(obs => 
                 mX >= obs.x_min && mX <= obs.x_max && mY >= obs.y_min && mY <= obs.y_max
             );
@@ -383,14 +386,12 @@
             if (isDraggingObstacle) {
                 isDraggingObstacle = false;
                 draggedObs = null;
-                // Keep wasDragging true briefly so click handler ignores this release
                 setTimeout(() => { wasDragging = false; }, 100);
             }
         });
 
-        // Click Event for Adding Waypoints
+        // Click Event for Adding Waypoints with Distance Safety Check
         worldCanvas.addEventListener('click', (e) => {
-            // Ignore click if user was panning or dragging an obstacle
             if (wasDragging || isDraggingObstacle || isPanning) return;
 
             const rect = worldCanvas.getBoundingClientRect();
@@ -399,12 +400,19 @@
             const mX = toMeterX(clickX);
             const mY = toMeterY(clickY);
 
-            // Don't add waypoint if clicked directly on top of an obstacle
             let clickedObs = obstacles.find(obs => 
                 mX >= obs.x_min && mX <= obs.x_max && mY >= obs.y_min && mY <= obs.y_max
             );
 
             if (!clickedObs && mX >= 0 && mX <= ROOM_SIZE && mY >= 0 && mY <= ROOM_SIZE) {
+                if (waypoints.length > 0) {
+                    const lastWp = waypoints[waypoints.length - 1];
+                    const dist = Math.hypot(mX - lastWp[0], mY - lastWp[1]);
+                    if (dist < MIN_WAYPOINT_DIST) {
+                        console.warn(`Waypoint too close to previous point (${dist.toFixed(2)}m < ${MIN_WAYPOINT_DIST}m). Ignored.`);
+                        return;
+                    }
+                }
                 waypoints.push([parseFloat(mX.toFixed(2)), parseFloat(mY.toFixed(2))]);
                 runStep();
             }
