@@ -12,7 +12,6 @@
         .control-group { display: flex; flex-direction: column; gap: 4px; }
         .control-group label { font-size: 0.8rem; color: #c9d1d9; display: flex; justify-content: space-between; }
         .control-group input, .control-group select { width: 100%; accent-color: #1f6feb; background: #0d1117; color: white; border: 1px solid #30363d; padding: 5px; border-radius: 4px; font-size: 0.85rem; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .btn { background-color: #238636; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; text-decoration: none; text-align: center; }
         .btn:hover { background-color: #2ea043; }
         .btn-reset { background-color: #da3633; }
@@ -23,7 +22,7 @@
         .btn-secondary:hover { background-color: #8b949e; }
         .btn-nav { background-color: #8957e5; color: white; display: block; margin-bottom: 8px; }
         .btn-nav:hover { background-color: #a371f7; }
-
+        
         .drag-box {
             background-color: #21262d;
             border: 2px dashed #58a6ff;
@@ -39,9 +38,8 @@
         }
         .drag-box:active { cursor: grabbing; background-color: #30363d; }
 
-        .main-content { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; height: 100vh; }
+        .main-content { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
         
-        /* Fixed Telemetry Bar height prevents status text from pushing down viewport */
         .telemetry-bar { 
             display: grid; 
             grid-template-columns: repeat(5, 1fr); 
@@ -71,9 +69,7 @@
             text-overflow: ellipsis; 
         }
 
-        .canvas-container { flex: 1; position: relative; width: 100%; height: 100%; min-height: 0; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
-        #webglCanvas { width: 100%; height: 100%; display: block; }
-        .canvas-hint { position: absolute; bottom: 12px; left: 16px; background: rgba(0,0,0,0.65); padding: 6px 12px; border-radius: 4px; font-size: 0.75rem; color: #8b949e; pointer-events: none; }
+        #canvas-container { flex: 1; background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; position: relative; min-height: 400px; }
         .button-row { display: flex; gap: 8px; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -83,7 +79,7 @@
 
     <div class="sidebar">
         <a href="/" class="btn btn-nav">🏠 Home / Landing</a>
-        <a href="/2d" class="btn btn-nav">🗺️ Switch to 2D View →</a>
+        <a href="/2d" class="btn btn-nav">🗺️ Switch to 2D Map →</a>
 
         <h2>🛠️ Sensor Hardware & Control</h2>
         <div class="control-group">
@@ -109,14 +105,39 @@
             <input type="range" id="max_range" min="2.0" max="10.0" step="0.5" value="5.0">
         </div>
 
-        <h2>📦 3D Object & Path Editor</h2>
+        <h2>📦 Object / Obstacle Sizer & Position</h2>
         <div class="drag-box" draggable="true" id="dragNewObs">
-            ➕ Drag me onto 3D plane to drop Obstacle
+            ➕ Drag me onto 3D scene to drop Obstacle
         </div>
 
-        <div class="button-row" style="margin-top:6px;">
-            <button class="btn btn-secondary" id="clearWaypointsBtn">Clear Path</button>
-            <button class="btn btn-reset" id="deleteObsBtn">Delete Selected Obs</button>
+        <div class="control-group">
+            <label>Selected Obstacle</label>
+            <select id="obs_select"></select>
+        </div>
+
+        <div class="control-group">
+            <label>Width: <span id="val-obs-width">1.00 m</span></label>
+            <input type="range" id="obs_width" min="0.2" max="4.0" step="0.1" value="1.0">
+        </div>
+
+        <div class="control-group">
+            <label>Height: <span id="val-obs-height">1.00 m</span></label>
+            <input type="range" id="obs_height" min="0.2" max="4.0" step="0.1" value="1.0">
+        </div>
+
+        <div class="control-group">
+            <label>X Center: <span id="val-obs-x">5.00 m</span></label>
+            <input type="range" id="obs_x" min="0.5" max="9.5" step="0.1" value="5.0">
+        </div>
+
+        <div class="control-group">
+            <label>Y Center: <span id="val-obs-y">5.00 m</span></label>
+            <input type="range" id="obs_y" min="0.5" max="9.5" step="0.1" value="5.0">
+        </div>
+
+        <div class="button-row">
+            <button class="btn btn-secondary" id="addObsBtn">+ Add Default</button>
+            <button class="btn btn-reset" id="deleteObsBtn">Delete Selected</button>
         </div>
 
         <div class="button-row" style="margin-top: 10px;">
@@ -128,82 +149,74 @@
 
     <div class="main-content">
         <div class="telemetry-bar">
-            <div class="metric-card"><span class="title">Status Log</span><span class="value" id="status-val">NOMINAL</span></div>
+            <div class="metric-card"><span class="title">Status</span><span class="value" id="status-val">NOMINAL</span></div>
             <div class="metric-card"><span class="title">Active Sensor Beams</span><span class="value" id="active-sensors-val">120</span></div>
             <div class="metric-card"><span class="title">Waypoints</span><span class="value" id="waypoints-val">0</span></div>
             <div class="metric-card"><span class="title">Closest Hit</span><span class="value" id="sensor-hit-val">0.00 m</span></div>
             <div class="metric-card"><span class="title">Collisions</span><span class="value" id="collisions-val">0</span></div>
         </div>
 
-        <div class="canvas-container">
-            <div id="webglCanvas"></div>
-            <div class="canvas-hint">Click Ground: Set Waypoint | Drag Red Box: Move Obstacle | Drag Sidebar Card: Add Obstacle | Left-Click Orbit: Rotate Camera</div>
-        </div>
+        <div id="canvas-container"></div>
     </div>
 
     <script>
-        const container = document.getElementById('webglCanvas');
         const ROOM_SIZE = 10.0;
-        const MIN_WAYPOINT_DIST = 0.35; // Minimum 0.35m gap between waypoints
+        const container = document.getElementById('canvas-container');
 
-        // Three.js Setup
+        // Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0d1117);
 
-        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
-        camera.position.set(5, 12, 14);
+        const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 100);
+        camera.position.set(5, 12, 12);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.shadowMap.enabled = true;
         container.appendChild(renderer.domElement);
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.target.set(5, 0, 5);
-        controls.update();
 
         // Lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
+
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
         dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
         scene.add(dirLight);
 
-        // Ground Floor Mesh & Grid
-        const floorGeo = new THREE.PlaneGeometry(ROOM_SIZE, ROOM_SIZE);
-        const floorMat = new THREE.MeshStandardMaterial({ color: 0x161b22, side: THREE.DoubleSide });
-        const floorMesh = new THREE.Mesh(floorGeo, floorMat);
-        floorMesh.rotation.x = -Math.PI / 2;
-        floorMesh.position.set(ROOM_SIZE/2, 0, ROOM_SIZE/2);
-        scene.add(floorMesh);
-
-        const gridHelper = new THREE.GridHelper(ROOM_SIZE, 10, 0x30363d, 0x21262d);
-        gridHelper.position.set(ROOM_SIZE/2, 0.01, ROOM_SIZE/2);
+        // Floor Grid
+        const gridHelper = new THREE.GridHelper(ROOM_SIZE, 10, 0x58a6ff, 0x30363d);
+        gridHelper.position.set(5, 0, 5);
         scene.add(gridHelper);
 
-        // Car Mesh Group
-        const carGroup = new THREE.Group();
-        const bodyGeo = new THREE.BoxGeometry(0.5, 0.25, 0.8);
-        const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff3333 });
-        const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-        bodyMesh.position.y = 0.125;
-        carGroup.add(bodyMesh);
+        const floorMesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(ROOM_SIZE, ROOM_SIZE),
+            new THREE.MeshStandardMaterial({ color: 0x161b22, side: THREE.DoubleSide })
+        );
+        floorMesh.rotation.x = Math.PI / 2;
+        floorMesh.position.set(5, -0.01, 5);
+        scene.add(floorMesh);
 
-        const noseGeo = new THREE.ConeGeometry(0.15, 0.3, 8);
-        const noseMat = new THREE.MeshStandardMaterial({ color: 0x00ffff });
-        const noseMesh = new THREE.Mesh(noseGeo, noseMat);
-        noseMesh.rotation.x = Math.PI / 2;
-        noseMesh.position.set(0, 0.15, 0.45);
-        carGroup.add(noseMesh);
+        // Vehicle Mesh
+        const carGroup = new THREE.Group();
+        const carBody = new THREE.Mesh(
+            new THREE.BoxGeometry(0.4, 0.2, 0.6),
+            new THREE.MeshStandardMaterial({ color: 0xff4d4d })
+        );
+        carBody.position.y = 0.1;
+        carGroup.add(carBody);
+
+        const headingArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0.2, 0), 0.8, 0xffff00);
+        carGroup.add(headingArrow);
         scene.add(carGroup);
 
-        // Dynamic Elements Objects
+        // Dynamic 3D Objects
         let obstacleMeshes = [];
-        let rayLinesGroup = new THREE.Group();
-        let pathLine = null;
-        let waypointMarkers = [];
-        scene.add(rayLinesGroup);
-
-        // State & Raycasting Controls
+        let rayLines = [];
+        let waypointMeshes = [];
         let waypoints = [[8.5, 8.5]];
         let currentWaypointIdx = 0;
         let obstacles = [];
@@ -212,12 +225,8 @@
         let isAutoPlaying = false;
         let animationInterval = null;
 
-        // Mouse Dragging in 3D
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
-        let isDraggingObs3D = false;
-        let draggedObsMesh = null;
-        let wasDragging = false;
 
         function bindSlider(id, labelId, suffix = '') {
             const input = document.getElementById(id);
@@ -227,14 +236,96 @@
 
         bindSlider('num_beams', 'val-beams');
         bindSlider('speed', 'val-speed');
-        bindSlider('max_range', 'val-range');
+        bindSlider('max_range', 'val-range', ' m');
 
-        // Sidebar Drag and Drop New Obstacle to 3D Canvas
-        const dragBox = document.getElementById('dragNewObs');
-        dragBox.addEventListener('dragstart', (e) => {
-            e.dataTransfer.setData('text/plain', 'new_obstacle');
+        // Slider bindings for Obstacle Editor
+        function populateObjectEditor() {
+            const select = document.getElementById('obs_select');
+            select.innerHTML = '';
+            obstacles.forEach((obs, idx) => {
+                const opt = document.createElement('option');
+                opt.value = obs.id;
+                opt.innerText = `Obstacle #${idx + 1} (ID: ${obs.id})`;
+                if (obs.id === selectedObsId) opt.selected = true;
+                select.appendChild(opt);
+            });
+
+            const current = obstacles.find(o => o.id === selectedObsId) || obstacles[0];
+            if (current) {
+                selectedObsId = current.id;
+                const width = parseFloat((current.x_max - current.x_min).toFixed(2));
+                const height = parseFloat((current.y_max - current.y_min).toFixed(2));
+                const centerX = parseFloat(((current.x_min + current.x_max) / 2).toFixed(2));
+                const centerY = parseFloat(((current.y_min + current.y_max) / 2).toFixed(2));
+
+                document.getElementById('obs_width').value = width;
+                document.getElementById('obs_height').value = height;
+                document.getElementById('obs_x').value = centerX;
+                document.getElementById('obs_y').value = centerY;
+
+                document.getElementById('val-obs-width').innerText = width.toFixed(2) + " m";
+                document.getElementById('val-obs-height').innerText = height.toFixed(2) + " m";
+                document.getElementById('val-obs-x').innerText = centerX.toFixed(2) + " m";
+                document.getElementById('val-obs-y').innerText = centerY.toFixed(2) + " m";
+            }
+        }
+
+        async function updateObstacleFromSliders() {
+            const obs = obstacles.find(o => o.id === selectedObsId);
+            if (obs) {
+                const width = parseFloat(document.getElementById('obs_width').value);
+                const height = parseFloat(document.getElementById('obs_height').value);
+                const centerX = parseFloat(document.getElementById('obs_x').value);
+                const centerY = parseFloat(document.getElementById('obs_y').value);
+
+                document.getElementById('val-obs-width').innerText = width.toFixed(2) + " m";
+                document.getElementById('val-obs-height').innerText = height.toFixed(2) + " m";
+                document.getElementById('val-obs-x').innerText = centerX.toFixed(2) + " m";
+                document.getElementById('val-obs-y').innerText = centerY.toFixed(2) + " m";
+
+                obs.x_min = parseFloat(Math.max(0, centerX - width / 2).toFixed(2));
+                obs.x_max = parseFloat(Math.min(ROOM_SIZE, centerX + width / 2).toFixed(2));
+                obs.y_min = parseFloat(Math.max(0, centerY - height / 2).toFixed(2));
+                obs.y_max = parseFloat(Math.min(ROOM_SIZE, centerY + height / 2).toFixed(2));
+
+                await syncObstacles();
+                runStep();
+            }
+        }
+
+        ['obs_width', 'obs_height', 'obs_x', 'obs_y'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updateObstacleFromSliders);
         });
 
+        document.getElementById('obs_select').addEventListener('change', (e) => {
+            selectedObsId = parseInt(e.target.value);
+            populateObjectEditor(); runStep();
+        });
+
+        document.getElementById('addObsBtn').addEventListener('click', async () => {
+            const newId = Date.now();
+            obstacles.push({ id: newId, x_min: 4.5, x_max: 5.5, y_min: 1.5, y_max: 2.5 });
+            selectedObsId = newId;
+            await syncObstacles(); populateObjectEditor(); runStep();
+        });
+
+        document.getElementById('deleteObsBtn').addEventListener('click', async () => {
+            obstacles = obstacles.filter(o => o.id !== selectedObsId);
+            selectedObsId = obstacles.length ? obstacles[0].id : null;
+            await syncObstacles(); populateObjectEditor(); runStep();
+        });
+
+        async function syncObstacles() {
+            await fetch('/api/obstacles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ obstacles })
+            });
+        }
+
+        // Drag & Drop Obstacle on 3D View
+        const dragBox = document.getElementById('dragNewObs');
+        dragBox.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', 'new_obstacle'));
         container.addEventListener('dragover', (e) => e.preventDefault());
 
         container.addEventListener('drop', async (e) => {
@@ -249,7 +340,7 @@
             if (intersects.length > 0) {
                 const pt = intersects[0].point;
                 const newId = Date.now();
-                const w = 1.2, h = 1.2;
+                const w = 1.0, h = 1.0;
 
                 obstacles.push({
                     id: newId,
@@ -261,4 +352,140 @@
 
                 selectedObsId = newId;
                 await syncObstacles();
+                populateObjectEditor();
                 runStep();
+            }
+        });
+
+        async function runStep() {
+            const payload = {
+                speed: parseFloat(document.getElementById('speed').value),
+                num_beams: parseInt(document.getElementById('num_beams').value),
+                max_range: parseFloat(document.getElementById('max_range').value),
+                safety_margin: 1.2,
+                sensor_mode: document.getElementById('sensor_mode').value,
+                waypoints: waypoints,
+                current_waypoint_idx: currentWaypointIdx
+            };
+
+            try {
+                const response = await fetch('/api/step', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+
+                if (data.obstacles) obstacles = data.obstacles;
+                if (!selectedObsId && obstacles.length) selectedObsId = obstacles[0].id;
+                populateObjectEditor();
+
+                currentWaypointIdx = data.current_waypoint_idx;
+                document.getElementById('status-val').innerText = data.status;
+                document.getElementById('active-sensors-val').innerText = data.active_sensor_count;
+                document.getElementById('waypoints-val').innerText = `${currentWaypointIdx}/${waypoints.length}`;
+                document.getElementById('sensor-hit-val').innerText = (data.min_sensor_hit || 0.0).toFixed(2) + " m";
+                document.getElementById('collisions-val').innerText = data.collisions;
+
+                update3DScene(data);
+            } catch (err) {
+                console.error("3D Step execution error:", err);
+            }
+        }
+
+        function update3DScene(data) {
+            // Update Car Position & Orientation
+            carGroup.position.set(data.car_x, 0, data.car_y);
+            carGroup.rotation.y = -data.car_heading + Math.PI / 2;
+
+            // Render Obstacles
+            obstacleMeshes.forEach(m => scene.remove(m));
+            obstacleMeshes = [];
+
+            data.obstacles.forEach(obs => {
+                const w = obs.x_max - obs.x_min;
+                const d = obs.y_max - obs.y_min;
+                const h = 1.2;
+
+                const geo = new THREE.BoxGeometry(w, h, d);
+                const mat = new THREE.MeshStandardMaterial({
+                    color: obs.id === selectedObsId ? 0xff7800 : 0x8b0000,
+                    transparent: true,
+                    opacity: 0.85
+                });
+
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(obs.x_min + w / 2, h / 2, obs.y_min + d / 2);
+                scene.add(mesh);
+                obstacleMeshes.push(mesh);
+            });
+
+            // Render LiDAR Rays
+            rayLines.forEach(l => scene.remove(l));
+            rayLines = [];
+
+            const rayMat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.4 });
+            data.all_rays.forEach(r => {
+                const points = [
+                    new THREE.Vector3(data.car_x, 0.1, data.car_y),
+                    new THREE.Vector3(r.end_x, 0.1, r.end_y)
+                ];
+                const geo = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geo, rayMat);
+                scene.add(line);
+                rayLines.push(line);
+            });
+
+            // Render Waypoint Markers
+            waypointMeshes.forEach(w => scene.remove(w));
+            waypointMeshes = [];
+
+            waypoints.forEach((wp, idx) => {
+                const geo = new THREE.SphereGeometry(0.15, 16, 16);
+                const mat = new THREE.MeshBasicMaterial({ color: idx === currentWaypointIdx ? 0xffbd2e : 0x888888 });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(wp[0], 0.15, wp[1]);
+                scene.add(mesh);
+                waypointMeshes.push(mesh);
+            });
+        }
+
+        function togglePlay() {
+            isAutoPlaying = !isAutoPlaying;
+            const playBtn = document.getElementById('playBtn');
+            if (isAutoPlaying) {
+                playBtn.innerText = "Pause ⏸️";
+                playBtn.style.backgroundColor = "#d29922";
+                animationInterval = setInterval(runStep, 100);
+            } else {
+                playBtn.innerText = "Play ▶️";
+                playBtn.style.backgroundColor = "#1f6feb";
+                clearInterval(animationInterval);
+            }
+        }
+
+        document.getElementById('stepBtn').addEventListener('click', runStep);
+        document.getElementById('playBtn').addEventListener('click', togglePlay);
+        document.getElementById('resetBtn').addEventListener('click', async () => {
+            if (isAutoPlaying) togglePlay();
+            await fetch('/api/reset', { method: 'POST' });
+            runStep();
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+        runStep();
+    </script>
+</body>
+</html>

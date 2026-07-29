@@ -41,7 +41,6 @@
 
         .main-content { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
         
-        /* Fixed Telemetry Bar height prevents status text from pushing down viewport */
         .telemetry-bar { 
             display: grid; 
             grid-template-columns: repeat(5, 1fr); 
@@ -119,7 +118,7 @@
             <button class="btn btn-reset" id="clearWaypointsBtn">Clear Path</button>
         </div>
 
-        <h2>📦 Object / Obstacle Editor</h2>
+        <h2>📦 Object / Obstacle Sizer & Position</h2>
         <div class="drag-box" draggable="true" id="dragNewObs">
             ➕ Drag me onto map to drop Obstacle
         </div>
@@ -128,28 +127,30 @@
             <label>Selected Obstacle</label>
             <select id="obs_select"></select>
         </div>
-        <div class="grid-2">
-            <div class="control-group">
-                <label>Min X (m)</label>
-                <input type="number" id="obs_xmin" step="0.2">
-            </div>
-            <div class="control-group">
-                <label>Max X (m)</label>
-                <input type="number" id="obs_xmax" step="0.2">
-            </div>
-            <div class="control-group">
-                <label>Min Y (m)</label>
-                <input type="number" id="obs_ymin" step="0.2">
-            </div>
-            <div class="control-group">
-                <label>Max Y (m)</label>
-                <input type="number" id="obs_ymax" step="0.2">
-            </div>
+
+        <div class="control-group">
+            <label>Width: <span id="val-obs-width">1.00 m</span></label>
+            <input type="range" id="obs_width" min="0.2" max="4.0" step="0.1" value="1.0">
         </div>
+
+        <div class="control-group">
+            <label>Height: <span id="val-obs-height">1.00 m</span></label>
+            <input type="range" id="obs_height" min="0.2" max="4.0" step="0.1" value="1.0">
+        </div>
+
+        <div class="control-group">
+            <label>X Center: <span id="val-obs-x">5.00 m</span></label>
+            <input type="range" id="obs_x" min="0.5" max="9.5" step="0.1" value="5.0">
+        </div>
+
+        <div class="control-group">
+            <label>Y Center: <span id="val-obs-y">5.00 m</span></label>
+            <input type="range" id="obs_y" min="0.5" max="9.5" step="0.1" value="5.0">
+        </div>
+
         <div class="button-row">
-            <button class="btn" id="updateObsBtn">Update Selected</button>
             <button class="btn btn-secondary" id="addObsBtn">+ Add Default</button>
-            <button class="btn btn-reset" id="deleteObsBtn">Delete</button>
+            <button class="btn btn-reset" id="deleteObsBtn">Delete Selected</button>
         </div>
 
         <div class="button-row" style="margin-top: 10px;">
@@ -190,7 +191,7 @@
 
         const CANVAS_SIZE = 500;
         const ROOM_SIZE = 10.0;
-        const MIN_WAYPOINT_DIST = 0.35; // Minimum 0.35m gap between waypoints
+        const MIN_WAYPOINT_DIST = 0.35;
 
         let zoomLevel = 1.0;
         let panX = 0, panY = 0;
@@ -220,7 +221,7 @@
 
         bindSlider('num_beams', 'val-beams');
         bindSlider('speed', 'val-speed');
-        bindSlider('max_range', 'val-range');
+        bindSlider('max_range', 'val-range', ' m');
         bindSlider('zoom_slider', 'val-zoom', 'x');
 
         document.getElementById('sensor_mode').addEventListener('change', (e) => {
@@ -257,7 +258,6 @@
             return ((CANVAS_SIZE - basePx) / CANVAS_SIZE) * ROOM_SIZE;
         }
 
-        // Wheel Zoom
         worldCanvas.addEventListener('wheel', (e) => {
             e.preventDefault();
             const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
@@ -272,15 +272,12 @@
             runStep();
         });
 
-        // HTML5 Drag & Drop New Obstacle from Sidebar
         const dragBox = document.getElementById('dragNewObs');
         dragBox.addEventListener('dragstart', (e) => {
             e.dataTransfer.setData('text/plain', 'new_obstacle');
         });
 
-        worldCanvas.addEventListener('dragover', (e) => {
-            e.preventDefault();
-        });
+        worldCanvas.addEventListener('dragover', (e) => e.preventDefault());
 
         worldCanvas.addEventListener('drop', async (e) => {
             e.preventDefault();
@@ -295,8 +292,8 @@
             const mY = toMeterY(clickY);
 
             const newId = Date.now();
-            const width = 1.2;
-            const height = 1.2;
+            const width = 1.0;
+            const height = 1.0;
 
             obstacles.push({
                 id: newId,
@@ -314,7 +311,6 @@
             setTimeout(() => { wasDragging = false; }, 100);
         });
 
-        // Mouse Events for Canvas Dragging
         worldCanvas.addEventListener('mousedown', (e) => {
             wasDragging = false;
             const rect = worldCanvas.getBoundingClientRect();
@@ -390,7 +386,6 @@
             }
         });
 
-        // Click Event for Adding Waypoints with Distance Safety Check
         worldCanvas.addEventListener('click', (e) => {
             if (wasDragging || isDraggingObstacle || isPanning) return;
 
@@ -408,10 +403,7 @@
                 if (waypoints.length > 0) {
                     const lastWp = waypoints[waypoints.length - 1];
                     const dist = Math.hypot(mX - lastWp[0], mY - lastWp[1]);
-                    if (dist < MIN_WAYPOINT_DIST) {
-                        console.warn(`Waypoint too close to previous point (${dist.toFixed(2)}m < ${MIN_WAYPOINT_DIST}m). Ignored.`);
-                        return;
-                    }
+                    if (dist < MIN_WAYPOINT_DIST) return;
                 }
                 waypoints.push([parseFloat(mX.toFixed(2)), parseFloat(mY.toFixed(2))]);
                 runStep();
@@ -429,6 +421,7 @@
             waypoints = []; currentWaypointIdx = 0; runStep();
         });
 
+        // Populate and Sync Object Sizer Sliders
         function populateObjectEditor() {
             const select = document.getElementById('obs_select');
             select.innerHTML = '';
@@ -443,27 +436,53 @@
             const current = obstacles.find(o => o.id === selectedObsId) || obstacles[0];
             if (current) {
                 selectedObsId = current.id;
-                document.getElementById('obs_xmin').value = current.x_min;
-                document.getElementById('obs_xmax').value = current.x_max;
-                document.getElementById('obs_ymin').value = current.y_min;
-                document.getElementById('obs_ymax').value = current.y_max;
+                const width = parseFloat((current.x_max - current.x_min).toFixed(2));
+                const height = parseFloat((current.y_max - current.y_min).toFixed(2));
+                const centerX = parseFloat(((current.x_min + current.x_max) / 2).toFixed(2));
+                const centerY = parseFloat(((current.y_min + current.y_max) / 2).toFixed(2));
+
+                document.getElementById('obs_width').value = width;
+                document.getElementById('obs_height').value = height;
+                document.getElementById('obs_x').value = centerX;
+                document.getElementById('obs_y').value = centerY;
+
+                document.getElementById('val-obs-width').innerText = width.toFixed(2) + " m";
+                document.getElementById('val-obs-height').innerText = height.toFixed(2) + " m";
+                document.getElementById('val-obs-x').innerText = centerX.toFixed(2) + " m";
+                document.getElementById('val-obs-y').innerText = centerY.toFixed(2) + " m";
             }
         }
+
+        async function updateObstacleFromSliders() {
+            const obs = obstacles.find(o => o.id === selectedObsId);
+            if (obs) {
+                const width = parseFloat(document.getElementById('obs_width').value);
+                const height = parseFloat(document.getElementById('obs_height').value);
+                const centerX = parseFloat(document.getElementById('obs_x').value);
+                const centerY = parseFloat(document.getElementById('obs_y').value);
+
+                document.getElementById('val-obs-width').innerText = width.toFixed(2) + " m";
+                document.getElementById('val-obs-height').innerText = height.toFixed(2) + " m";
+                document.getElementById('val-obs-x').innerText = centerX.toFixed(2) + " m";
+                document.getElementById('val-obs-y').innerText = centerY.toFixed(2) + " m";
+
+                obs.x_min = parseFloat(Math.max(0, centerX - width / 2).toFixed(2));
+                obs.x_max = parseFloat(Math.min(ROOM_SIZE, centerX + width / 2).toFixed(2));
+                obs.y_min = parseFloat(Math.max(0, centerY - height / 2).toFixed(2));
+                obs.y_max = parseFloat(Math.min(ROOM_SIZE, centerY + height / 2).toFixed(2));
+
+                await syncObstacles();
+                runStep();
+            }
+        }
+
+        ['obs_width', 'obs_height', 'obs_x', 'obs_y'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updateObstacleFromSliders);
+        });
 
         document.getElementById('obs_select').addEventListener('change', (e) => {
             selectedObsId = parseInt(e.target.value);
             populateObjectEditor(); runStep();
-        });
-
-        document.getElementById('updateObsBtn').addEventListener('click', async () => {
-            const obs = obstacles.find(o => o.id === selectedObsId);
-            if (obs) {
-                obs.x_min = parseFloat(document.getElementById('obs_xmin').value);
-                obs.x_max = parseFloat(document.getElementById('obs_xmax').value);
-                obs.y_min = parseFloat(document.getElementById('obs_ymin').value);
-                obs.y_max = parseFloat(document.getElementById('obs_ymax').value);
-                await syncObstacles(); runStep();
-            }
         });
 
         document.getElementById('addObsBtn').addEventListener('click', async () => {
@@ -547,12 +566,10 @@
         function renderWorld(data) {
             ctxWorld.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-            // Draw Boundary
             ctxWorld.strokeStyle = '#30363d';
             ctxWorld.lineWidth = 2;
             ctxWorld.strokeRect(toPixelX(0), toPixelY(ROOM_SIZE), (ROOM_SIZE/ROOM_SIZE)*CANVAS_SIZE*zoomLevel, (ROOM_SIZE/ROOM_SIZE)*CANVAS_SIZE*zoomLevel);
 
-            // Draw Obstacles
             data.obstacles.forEach(obs => {
                 const x = toPixelX(obs.x_min);
                 const y = toPixelY(obs.y_max);
@@ -565,7 +582,6 @@
                 ctxWorld.strokeRect(x, y, w, h);
             });
 
-            // Draw LiDAR Rays
             ctxWorld.strokeStyle = 'rgba(0, 255, 255, 0.25)';
             ctxWorld.lineWidth = 0.9;
             const carPxX = toPixelX(data.car_x);
@@ -578,7 +594,6 @@
                 ctxWorld.stroke();
             });
 
-            // Draw Target Path & Waypoints
             if (waypoints.length > 0) {
                 ctxWorld.strokeStyle = '#ffbd2e';
                 ctxWorld.setLineDash([5, 5]);
@@ -600,13 +615,11 @@
                 });
             }
 
-            // Draw RC Car Body
             ctxWorld.fillStyle = 'red';
             ctxWorld.beginPath();
             ctxWorld.arc(carPxX, carPxY, 6 * zoomLevel, 0, Math.PI * 2);
             ctxWorld.fill();
 
-            // Heading Vector Indicator
             const arrowLen = 15 * zoomLevel;
             const endX = carPxX + arrowLen * Math.cos(-data.car_heading);
             const endY = carPxY + arrowLen * Math.sin(-data.car_heading);
