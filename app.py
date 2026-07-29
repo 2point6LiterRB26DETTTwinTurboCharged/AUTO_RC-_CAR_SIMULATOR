@@ -64,56 +64,62 @@ def cast_lidar_ray(x, y, angle, max_r, current_obstacles, room_size):
     end_y = y + max_r * np.sin(angle)
     return max_r, end_x, end_y
 
-def calculate_navigation(car_x, car_y, car_heading, waypoints, current_idx, lidar_distances, angles, speed, safety_margin, max_range):
-    """Calculates smoothed steering towards active waypoint with dynamic skipping for close waypoints."""
-    if not waypoints or current_idx >= len(waypoints):
-        sim_state["status"] = "🎉 ALL WAYPOINTS REACHED!"
-        return 0.0, 0.0, current_idx
+import numpy as np
 
-    target = waypoints[current_idx]
-    dx = target[0] - car_x
-    dy = target[1] - car_y
-    dist_to_target = np.hypot(dx, dy)
+def calculate_lidar_rays(car_x, car_y, car_heading, num_beams, max_range, obstacles, room_size=10.0):
+    # 1. Generate all beam angles at once using NumPy
+    if num_beams == 4:
+        # Front, Right, Rear, Left
+        relative_angles = np.array([0.0, np.pi/2, np.pi, -np.pi/2])
+    else:
+        relative_angles = np.linspace(0, 2 * np.pi, num_beams, endpoint=False)
 
-    # Dynamic acceptance radius based on speed
-    acceptance_radius = max(0.25, speed * 0.4)
+    angles = car_heading + relative_angles
+    
+    # Unit direction vectors for all rays simultaneously
+    dx = np.cos(angles)
+    dy = np.sin(angles)
 
-    # Skip waypoints that are already too close or passed to avoid getting stuck in loops
-    while dist_to_target < acceptance_radius and current_idx < len(waypoints) - 1:
-        current_idx += 1
-        target = waypoints[current_idx]
-        dx = target[0] - car_x
-        dy = target[1] - car_y
-        dist_to_target = np.hypot(dx, dy)
+    distances = np.full(num_beams, max_range, dtype=np.float64)
 
-    if current_idx >= len(waypoints) - 1 and dist_to_target < acceptance_radius:
-        sim_state["status"] = "🎉 ALL WAYPOINTS REACHED!"
-        return 0.0, 0.0, current_idx
+    # 2. Vectorized Wall Intersections (Room boundaries)
+    with np.errstate(divide='ignore'):
+        t_right  = np.where(dx > 0, (room_size - car_x) / dx, np.inf)
+        t_left   = np.where(dx < 0, (0.0 - car_x) / dx, np.inf)
+        t_top    = np.where(dy > 0, (room_size - car_y) / dy, np.inf)
+        t_bottom = np.where(dy < 0, (0.0 - car_y) / dy, np.inf)
 
-    target_angle = np.arctan2(dy, dx)
-    heading_diff = target_angle - car_heading
-    heading_diff = np.arctan2(np.sin(heading_diff), np.cos(heading_diff))
+    wall_distances = np.minimum(np.minimum(t_right, t_left), np.minimum(t_top, t_bottom))
+    distances = np.minimum(distances, wall_distances)
 
-    # Calculate proportional steering angle towards target
-    desired_steering = float(np.clip(0.35 * heading_diff, -0.35, 0.35))
+    # 3. Vectorized Obstacle Raycast Box Intersections
+    for obs in obstacles:
+        x_min, x_max = obs['x_min'], obs['x_max']
+        y_min, y_max = obs['y_min'], obs['y_max']
 
-    # Obstacle avoidance override
-    front_indices = np.where((angles >= -np.pi / 4) & (angles <= np.pi / 4))[0]
-    min_front = np.min(lidar_distances[front_indices]) if len(front_indices) > 0 else max_range
+        with np.errstate(divide='ignore', invalid='ignore'):
+            tx1 = np.where(dx != 0, (x_min - car_x) / dx, -np.inf)
+            tx2 = np.where(dx != 0, (x_max - car_x) / dx, np.inf)
+            ty1 = np.where(dy != 0, (y_min - car_y) / dy, -np.inf)
+            ty2 = np.where(dy != 0, (y_max - car_y) / dy, np.inf)
 
-    if min_front < safety_margin:
-        sim_state["status"] = f"⚠️ OBSTACLE AHEAD - DODGING (Target #{current_idx + 1})"
-        left_indices = np.where((angles > np.pi / 6) & (angles <= np.pi / 2))[0]
-        right_indices = np.where((angles < -np.pi / 6) & (angles >= -np.pi / 2))[0]
-        mean_left = np.mean(lidar_distances[left_indices]) if len(left_indices) > 0 else max_range
-        mean_right = np.mean(lidar_distances[right_indices]) if len(right_indices) > 0 else max_range
-        
-        avoid_steering = -0.4 if mean_left < mean_right else 0.4
-        return speed * 0.4, avoid_steering, current_idx
+            tmin = np.maximum(np.minimum(tx1, tx2), np.minimum(ty1, ty2))
+            tmax = np.minimum(np.maximum(tx1, tx2), np.maximum(ty1, ty2))
 
-    sim_state["status"] = f"🟢 ROUTE ACTIVE - WAYPOINT {current_idx + 1}/{len(waypoints)}"
-    return speed, desired_steering, current_idx
+        # Check valid box hits in front of the ray (tmin < tmax and tmin > 0)
+        hit_mask = (tmax >= tmin) & (tmin > 0) & (tmin < distances)
+        distances[hit_mask] = tmin[hit_mask]
 
+    # Calculate end points for all rays
+    end_x = car_x + distances * dx
+    end_y = car_y + distances * dy
+
+    all_rays = [
+        {"angle": float(a), "dist": float(d), "end_x": float(ex), "end_y": float(ey)}
+        for a, d, ex, ey in zip(angles, distances, end_x, end_y)
+    ]
+
+    return distances, angles, all_rays
 # -------------------- ROUTES --------------------
 @app.route("/")
 def landing():

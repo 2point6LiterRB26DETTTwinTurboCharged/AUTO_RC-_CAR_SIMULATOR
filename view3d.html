@@ -358,6 +358,7 @@
         });
 
         async function runStep() {
+            if (isDraggingObs3D) return;
             const payload = {
                 speed: parseFloat(document.getElementById('speed').value),
                 num_beams: parseInt(document.getElementById('num_beams').value),

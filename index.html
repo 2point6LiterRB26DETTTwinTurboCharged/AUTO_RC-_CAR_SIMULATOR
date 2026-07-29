@@ -340,14 +340,56 @@
             }
         });
 
-        window.addEventListener('mousemove', async (e) => {
+        let syncTimeout = null;
+
+        window.addEventListener('mousemove', (e) => {
             if (isPanning) {
                 wasDragging = true;
                 panX = e.clientX - startPanX;
                 panY = e.clientY - startPanY;
-                runStep();
+                renderWorld(lastData); // Redraw locally instantly without hitting API
                 return;
             }
+
+            if (isDraggingObstacle && draggedObs) {
+                wasDragging = true;
+                const rect = worldCanvas.getBoundingClientRect();
+                const mousePxX = e.clientX - rect.left;
+                const mousePxY = e.clientY - rect.top;
+                const currentMX = toMeterX(mousePxX);
+                const currentMY = toMeterY(mousePxY);
+
+                const width = draggedObs.x_max - draggedObs.x_min;
+                const height = draggedObs.y_max - draggedObs.y_min;
+
+                let newXmin = currentMX - dragOffsetMeterX;
+                let newYmin = currentMY - dragOffsetMeterY;
+
+                newXmin = Math.max(0, Math.min(ROOM_SIZE - width, newXmin));
+                newYmin = Math.max(0, Math.min(ROOM_SIZE - height, newYmin));
+
+                draggedObs.x_min = parseFloat(newXmin.toFixed(2));
+                draggedObs.x_max = parseFloat((newXmin + width).toFixed(2));
+                draggedObs.y_min = parseFloat(newYmin.toFixed(2));
+                draggedObs.y_max = parseFloat((newYmin + height).toFixed(2));
+
+                populateObjectEditor();
+
+                // 1. Instant local render (no network delay)
+                if (lastData) {
+                    lastData.obstacles = obstacles;
+                    renderWorld(lastData);
+                }
+
+                // 2. Throttle backend API calls (sync max once every 50ms)
+                if (!syncTimeout) {
+                    syncTimeout = setTimeout(async () => {
+                        await syncObstacles();
+                        syncTimeout = null;
+                    }, 50);
+                }
+            }
+        });
 
             if (isDraggingObstacle && draggedObs) {
                 wasDragging = true;
@@ -507,6 +549,7 @@
         }
 
         async function runStep() {
+            if (isDraggingObstacle) return;
             const payload = {
                 speed: parseFloat(document.getElementById('speed').value),
                 num_beams: parseInt(document.getElementById('num_beams').value),
