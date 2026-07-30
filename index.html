@@ -114,8 +114,11 @@
         </div>
         <div class="button-row">
             <button class="btn btn-secondary" id="recenterBtn">Recenter View</button>
-            <button class="btn btn-reset" id="clearWaypointsBtn">Clear Path</button>
         </div>
+
+        <h2>🚩 Waypoint Path Manager</h2>
+        <div id="waypoint-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 120px; overflow-y: auto;"></div>
+        <button class="btn btn-reset" id="clearWaypointsBtn" style="margin-top: 6px;">Clear All Waypoints</button>
 
         <h2>📦 Object / Obstacle Sizer & Position</h2>
         <div class="drag-box" draggable="true" id="dragNewObs">
@@ -170,9 +173,9 @@
 
         <div class="canvas-container">
             <div class="card">
-                <h3>🌐 2D World View (Drag Obstacles | Click to set Path)</h3>
+                <h3>🌐 2D World View (Left-Click: Add WP | Right-Click: Delete WP)</h3>
                 <canvas id="worldCanvas" width="500" height="500"></canvas>
-                <div class="canvas-hint">Drag Obstacle: Move | Shift+Drag: Pan View | Click: Set Path</div>
+                <div class="canvas-hint">Drag Obstacle: Move | Shift+Drag: Pan View | Right-Click: Delete WP</div>
             </div>
 
             <div class="card">
@@ -209,7 +212,7 @@
         let dragOffsetMeterX = 0;
         let dragOffsetMeterY = 0;
 
-        let lastData = null; // Store state for instant 60 FPS drag updates
+        let lastData = null;
         let syncTimeout = null;
 
         let isAutoPlaying = false;
@@ -274,6 +277,45 @@
             if (lastData) renderWorld(lastData);
         });
 
+        function renderWaypointList() {
+            const listContainer = document.getElementById('waypoint-list');
+            if (!listContainer) return;
+            listContainer.innerHTML = '';
+
+            if (waypoints.length === 0) {
+                listContainer.innerHTML = '<span style="font-size: 0.75rem; color: #8b949e;">No active waypoints. Click map to add.</span>';
+                return;
+            }
+
+            waypoints.forEach((wp, idx) => {
+                const item = document.createElement('div');
+                item.style.cssText = 'display: flex; justify-content: space-between; align-items: center; background: #0d1117; padding: 4px 8px; border-radius: 4px; border: 1px solid #30363d; font-size: 0.8rem;';
+                
+                const isCurrent = idx === currentWaypointIdx;
+                const label = document.createElement('span');
+                label.style.color = isCurrent ? '#ffbd2e' : '#c9d1d9';
+                label.innerText = `${isCurrent ? '▶ ' : ''}WP #${idx + 1}: (${wp[0]}, ${wp[1]})`;
+
+                const delBtn = document.createElement('button');
+                delBtn.innerText = '❌';
+                delBtn.style.cssText = 'background: none; border: none; cursor: pointer; font-size: 0.75rem;';
+                delBtn.onclick = () => deleteWaypoint(idx);
+
+                item.appendChild(label);
+                item.appendChild(delBtn);
+                listContainer.appendChild(item);
+            });
+        }
+
+        function deleteWaypoint(index) {
+            waypoints.splice(index, 1);
+            if (currentWaypointIdx >= waypoints.length) {
+                currentWaypointIdx = Math.max(0, waypoints.length - 1);
+            }
+            renderWaypointList();
+            runStep();
+        }
+
         const dragBox = document.getElementById('dragNewObs');
         dragBox.addEventListener('dragstart', (e) => {
             e.dataTransfer.setData('text/plain', 'new_obstacle');
@@ -313,6 +355,8 @@
             setTimeout(() => { wasDragging = false; }, 100);
         });
 
+        worldCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
         worldCanvas.addEventListener('mousedown', (e) => {
             wasDragging = false;
             const rect = worldCanvas.getBoundingClientRect();
@@ -321,10 +365,18 @@
             const mX = toMeterX(mousePxX);
             const mY = toMeterY(mousePxY);
 
+            if (e.button === 2) {
+                const hitIdx = waypoints.findIndex(wp => Math.hypot(wp[0] - mX, wp[1] - mY) < 0.4);
+                if (hitIdx !== -1) {
+                    deleteWaypoint(hitIdx);
+                    return;
+                }
+            }
+
             if (e.shiftKey || e.button === 1) {
                 isPanning = true;
                 startPanX = e.clientX - panX;
-                startPanY = e.clientY - panY;
+                startPanY = e.clientY - startPanY;
                 return;
             }
 
@@ -332,7 +384,7 @@
                 mX >= obs.x_min && mX <= obs.x_max && mY >= obs.y_min && mY <= obs.y_max
             );
 
-            if (clickedObs) {
+            if (clickedObs && e.button === 0) {
                 isDraggingObstacle = true;
                 draggedObs = clickedObs;
                 selectedObsId = clickedObs.id;
@@ -394,13 +446,13 @@
             if (isDraggingObstacle) {
                 isDraggingObstacle = false;
                 draggedObs = null;
-                runStep(); // Execute step once drag finishes
+                runStep();
                 setTimeout(() => { wasDragging = false; }, 100);
             }
         });
 
         worldCanvas.addEventListener('click', (e) => {
-            if (wasDragging || isDraggingObstacle || isPanning) return;
+            if (wasDragging || isDraggingObstacle || isPanning || e.button !== 0) return;
 
             const rect = worldCanvas.getBoundingClientRect();
             const clickX = e.clientX - rect.left;
@@ -419,6 +471,7 @@
                     if (dist < MIN_WAYPOINT_DIST) return;
                 }
                 waypoints.push([parseFloat(mX.toFixed(2)), parseFloat(mY.toFixed(2))]);
+                renderWaypointList();
                 runStep();
             }
         });
@@ -431,7 +484,7 @@
         });
 
         document.getElementById('clearWaypointsBtn').addEventListener('click', () => {
-            waypoints = []; currentWaypointIdx = 0; runStep();
+            waypoints = []; currentWaypointIdx = 0; renderWaypointList(); runStep();
         });
 
         function populateObjectEditor() {
@@ -465,37 +518,7 @@
             }
         }
 
-        async function updateObstacleFromSliders() {
-            const obs = obstacles.find(o => o.id === selectedObsId);
-            if (obs) {
-                const width = parseFloat(document.getElementById('obs_width').value);
-                const height = parseFloat(document.getElementById('obs_height').value);
-                const centerX = parseFloat(document.getElementById('obs_x').value);
-                const centerY = parseFloat(document.getElementById('obs_y').value);
-
-                document.getElementById('val-obs-width').innerText = width.toFixed(2) + " m";
-                document.getElementById('val-obs-height').innerText = height.toFixed(2) + " m";
-                document.getElementById('val-obs-x').innerText = centerX.toFixed(2) + " m";
-                document.getElementById('val-obs-y').innerText = centerY.toFixed(2) + " m";
-
-                obs.x_min = parseFloat(Math.max(0, centerX - width / 2).toFixed(2));
-                obs.x_max = parseFloat(Math.min(ROOM_SIZE, centerX + width / 2).toFixed(2));
-                obs.y_min = parseFloat(Math.max(0, centerY - height / 2).toFixed(2));
-                obs.y_max = parseFloat(Math.min(ROOM_SIZE, centerY + height / 2).toFixed(2));
-
-                await syncObstacles();
-                runStep();
-            }
-        }
-
-        ['obs_width', 'obs_height', 'obs_x', 'obs_y'].forEach(id => {
-            document.getElementById(id).addEventListener('input', updateObstacleFromSliders);
-        });
-
-        document.getElementById('obs_select').addEventListener('change', (e) => {
-            selectedObsId = parseInt(e.target.value);
-            populateObjectEditor(); runStep();
-        });
+        
 
         document.getElementById('addObsBtn').addEventListener('click', async () => {
             const newId = Date.now();
@@ -537,18 +560,24 @@
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
-                lastData = data; // Save for smooth offline dragging
+                lastData = data;
 
                 if (data.obstacles) obstacles = data.obstacles;
                 if (!selectedObsId && obstacles.length) selectedObsId = obstacles[0].id;
                 populateObjectEditor();
 
                 currentWaypointIdx = data.current_waypoint_idx;
+                renderWaypointList();
+
                 document.getElementById('status-val').innerText = data.status;
                 document.getElementById('active-sensors-val').innerText = data.active_sensor_count;
                 document.getElementById('waypoints-val').innerText = `${currentWaypointIdx}/${waypoints.length}`;
                 document.getElementById('sensor-hit-val').innerText = (data.min_sensor_hit || 0.0).toFixed(2) + " m";
                 document.getElementById('collisions-val').innerText = data.collisions;
+
+                if (data.status === 'DESTINATION REACHED' && isAutoPlaying) {
+                    togglePlay();
+                }
 
                 renderWorld(data);
                 renderMap(data);
@@ -560,6 +589,9 @@
         async function resetSimulation() {
             if (isAutoPlaying) togglePlay();
             await fetch('/api/reset', { method: 'POST' });
+            waypoints = [[8.5, 8.5]];
+            currentWaypointIdx = 0;
+            renderWaypointList();
             runStep();
         }
 
@@ -666,6 +698,7 @@
         document.getElementById('playBtn').addEventListener('click', togglePlay);
         document.getElementById('resetBtn').addEventListener('click', resetSimulation);
 
+        renderWaypointList();
         runStep();
     </script>
 </body>

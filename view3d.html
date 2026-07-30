@@ -163,11 +163,10 @@
         const ROOM_SIZE = 10.0;
         const container = document.getElementById('canvas-container');
 
-        // DECLARE DRAGGING STATE GLOBALLY
         let isDraggingObs3D = false;
         let syncTimeout = null;
+        let lastData = null;
 
-        // Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0d1117);
 
@@ -182,7 +181,6 @@
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.target.set(5, 0, 5);
 
-        // Lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
 
@@ -191,7 +189,6 @@
         dirLight.castShadow = true;
         scene.add(dirLight);
 
-        // Floor Grid & Invisible Raycast Plane
         const gridHelper = new THREE.GridHelper(ROOM_SIZE, 10, 0x58a6ff, 0x30363d);
         gridHelper.position.set(5, 0, 5);
         scene.add(gridHelper);
@@ -203,23 +200,28 @@
         floorMesh.position.set(5, 0, 5);
         scene.add(floorMesh);
 
-        // Vehicle Mesh
+        // Car setup: Length along X, width along Z
         const carGroup = new THREE.Group();
         const carBody = new THREE.Mesh(
-            new THREE.BoxGeometry(0.4, 0.2, 0.6),
+            new THREE.BoxGeometry(0.6, 0.2, 0.4),
             new THREE.MeshStandardMaterial({ color: 0xff4d4d })
         );
         carBody.position.y = 0.1;
         carGroup.add(carBody);
 
-        const headingArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0.2, 0), 0.8, 0xffff00);
+        const headingArrow = new THREE.ArrowHelper(
+            new THREE.Vector3(1, 0, 0),
+            new THREE.Vector3(0, 0.1, 0),
+            0.6,
+            0x00ff00
+        );
         carGroup.add(headingArrow);
         scene.add(carGroup);
 
-        // Dynamic 3D Objects
         let obstacleMeshes = [];
         let rayLines = [];
         let waypointMeshes = [];
+
         let waypoints = [[8.5, 8.5]];
         let currentWaypointIdx = 0;
         let obstacles = [];
@@ -244,6 +246,7 @@
         function populateObjectEditor() {
             const select = document.getElementById('obs_select');
             select.innerHTML = '';
+
             obstacles.forEach((obs, idx) => {
                 const opt = document.createElement('option');
                 opt.value = obs.id;
@@ -290,12 +293,10 @@
                 obs.y_min = parseFloat(Math.max(0, centerY - height / 2).toFixed(2));
                 obs.y_max = parseFloat(Math.min(ROOM_SIZE, centerY + height / 2).toFixed(2));
 
-                if (!syncTimeout) {
-                    syncTimeout = setTimeout(async () => {
-                        await syncObstacles();
-                        runStep();
-                        syncTimeout = null;
-                    }, 50);
+                await syncObstacles();
+                if (lastData) {
+                    lastData.obstacles = obstacles;
+                    render3DScene(lastData);
                 }
             }
         }
@@ -306,20 +307,31 @@
 
         document.getElementById('obs_select').addEventListener('change', (e) => {
             selectedObsId = parseInt(e.target.value);
-            populateObjectEditor(); runStep();
+            populateObjectEditor();
+            if (lastData) render3DScene(lastData);
         });
 
         document.getElementById('addObsBtn').addEventListener('click', async () => {
             const newId = Date.now();
             obstacles.push({ id: newId, x_min: 4.5, x_max: 5.5, y_min: 1.5, y_max: 2.5 });
             selectedObsId = newId;
-            await syncObstacles(); populateObjectEditor(); runStep();
+            await syncObstacles();
+            populateObjectEditor();
+            if (lastData) {
+                lastData.obstacles = obstacles;
+                render3DScene(lastData);
+            }
         });
 
         document.getElementById('deleteObsBtn').addEventListener('click', async () => {
             obstacles = obstacles.filter(o => o.id !== selectedObsId);
             selectedObsId = obstacles.length ? obstacles[0].id : null;
-            await syncObstacles(); populateObjectEditor(); runStep();
+            await syncObstacles();
+            populateObjectEditor();
+            if (lastData) {
+                lastData.obstacles = obstacles;
+                render3DScene(lastData);
+            }
         });
 
         async function syncObstacles() {
@@ -330,11 +342,10 @@
             });
         }
 
-        // Drag & Drop Obstacle onto 3D Canvas
         const dragBox = document.getElementById('dragNewObs');
         dragBox.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', 'new_obstacle'));
-        container.addEventListener('dragover', (e) => e.preventDefault());
 
+        container.addEventListener('dragover', (e) => e.preventDefault());
         container.addEventListener('drop', async (e) => {
             e.preventDefault();
             const rect = renderer.domElement.getBoundingClientRect();
@@ -363,53 +374,54 @@
                 selectedObsId = newId;
                 await syncObstacles();
                 populateObjectEditor();
-                runStep();
+                if (lastData) {
+                    lastData.obstacles = obstacles;
+                    render3DScene(lastData);
+                }
             }
         });
 
         async function runStep() {
-            if (isDraggingObs3D) return;
-
-            const payload = {
-                speed: parseFloat(document.getElementById('speed').value),
-                num_beams: parseInt(document.getElementById('num_beams').value),
-                max_range: parseFloat(document.getElementById('max_range').value),
-                safety_margin: 1.2,
-                sensor_mode: document.getElementById('sensor_mode').value,
-                waypoints: waypoints,
-                current_waypoint_idx: currentWaypointIdx
-            };
+            const numBeams = parseInt(document.getElementById('num_beams').value);
+            const speed = parseFloat(document.getElementById('speed').value);
+            const maxRange = parseFloat(document.getElementById('max_range').value);
+            const sensorMode = document.getElementById('sensor_mode').value;
 
             try {
                 const response = await fetch('/api/step', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({
+                        speed,
+                        num_beams: numBeams,
+                        max_range: maxRange,
+                        sensor_mode: sensorMode,
+                        waypoints,
+                        current_waypoint_idx: currentWaypointIdx
+                    })
                 });
+
                 const data = await response.json();
-
-                if (data.obstacles) obstacles = data.obstacles;
-                if (!selectedObsId && obstacles.length) selectedObsId = obstacles[0].id;
-                populateObjectEditor();
-
+                lastData = data;
                 currentWaypointIdx = data.current_waypoint_idx;
+                obstacles = data.obstacles || obstacles;
+
                 document.getElementById('status-val').innerText = data.status;
                 document.getElementById('active-sensors-val').innerText = data.active_sensor_count;
-                document.getElementById('waypoints-val').innerText = `${currentWaypointIdx}/${waypoints.length}`;
-                document.getElementById('sensor-hit-val').innerText = (data.min_sensor_hit || 0.0).toFixed(2) + " m";
+                document.getElementById('waypoints-val').innerText = `${data.current_waypoint_idx} / ${waypoints.length}`;
+                document.getElementById('sensor-hit-val').innerText = `${data.min_sensor_hit.toFixed(2)} m`;
                 document.getElementById('collisions-val').innerText = data.collisions;
 
-                update3DScene(data);
+                render3DScene(data);
             } catch (err) {
-                console.error("3D Step error:", err);
+                console.error("Step execution error:", err);
             }
         }
 
-        function update3DScene(data) {
+        function render3DScene(data) {
             carGroup.position.set(data.car_x, 0, data.car_y);
-            carGroup.rotation.y = -data.car_heading + Math.PI / 2;
+            carGroup.rotation.y = -data.car_heading;
 
-            // Update Obstacle Meshes
             obstacleMeshes.forEach(m => scene.remove(m));
             obstacleMeshes = [];
 
@@ -424,41 +436,45 @@
                     transparent: true,
                     opacity: 0.85
                 });
-
                 const mesh = new THREE.Mesh(geo, mat);
                 mesh.position.set(obs.x_min + w / 2, h / 2, obs.y_min + d / 2);
                 scene.add(mesh);
                 obstacleMeshes.push(mesh);
             });
 
-            // Update LiDAR Rays
             rayLines.forEach(l => scene.remove(l));
             rayLines = [];
 
-            const rayMat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.4 });
-            data.all_rays.forEach(r => {
-                const points = [
-                    new THREE.Vector3(data.car_x, 0.1, data.car_y),
-                    new THREE.Vector3(r.end_x, 0.1, r.end_y)
-                ];
-                const geo = new THREE.BufferGeometry().setFromPoints(points);
-                const line = new THREE.Line(geo, rayMat);
-                scene.add(line);
-                rayLines.push(line);
-            });
+            const rayMat = new THREE.LineBasicMaterial({ color: 0x58a6ff, transparent: true, opacity: 0.4 });
+            const hitRayMat = new THREE.LineBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.7 });
 
-            // Update Waypoints
-            waypointMeshes.forEach(w => scene.remove(w));
+            if (data.all_rays) {
+                data.all_rays.forEach(ray => {
+                    const points = [
+                        new THREE.Vector3(data.car_x, 0.1, data.car_y),
+                        new THREE.Vector3(ray.end_x, 0.1, ray.end_y)
+                    ];
+                    const geo = new THREE.BufferGeometry().setFromPoints(points);
+                    const isHit = ray.dist < parseFloat(document.getElementById('max_range').value) * 0.98;
+                    const line = new THREE.Line(geo, isHit ? hitRayMat : rayMat);
+                    scene.add(line);
+                    rayLines.push(line);
+                });
+            }
+
+            waypointMeshes.forEach(m => scene.remove(m));
             waypointMeshes = [];
 
-            waypoints.forEach((wp, idx) => {
-                const geo = new THREE.SphereGeometry(0.15, 16, 16);
-                const mat = new THREE.MeshBasicMaterial({ color: idx === currentWaypointIdx ? 0xffbd2e : 0x888888 });
-                const mesh = new THREE.Mesh(geo, mat);
-                mesh.position.set(wp[0], 0.15, wp[1]);
-                scene.add(mesh);
-                waypointMeshes.push(mesh);
-            });
+            if (data.waypoints) {
+                data.waypoints.forEach((wp, idx) => {
+                    const geo = new THREE.SphereGeometry(0.15, 16, 16);
+                    const mat = new THREE.MeshBasicMaterial({ color: idx === data.current_waypoint_idx ? 0xffbd2e : 0x2ea043 });
+                    const mesh = new THREE.Mesh(geo, mat);
+                    mesh.position.set(wp[0], 0.15, wp[1]);
+                    scene.add(mesh);
+                    waypointMeshes.push(mesh);
+                });
+            }
         }
 
         function togglePlay() {
@@ -480,6 +496,8 @@
         document.getElementById('resetBtn').addEventListener('click', async () => {
             if (isAutoPlaying) togglePlay();
             await fetch('/api/reset', { method: 'POST' });
+            waypoints = [[8.5, 8.5]];
+            currentWaypointIdx = 0;
             runStep();
         });
 
@@ -496,7 +514,14 @@
         }
 
         animate();
-        runStep();
+        (async function init() {
+            const obsRes = await fetch('/api/obstacles');
+            const obsData = await obsRes.json();
+            obstacles = obsData.obstacles || [];
+            if (obstacles.length > 0) selectedObsId = obstacles[0].id;
+            populateObjectEditor();
+            runStep();
+        })();
     </script>
 </body>
 </html>
