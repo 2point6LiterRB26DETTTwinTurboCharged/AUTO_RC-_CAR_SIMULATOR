@@ -164,7 +164,6 @@
         const container = document.getElementById('canvas-container');
 
         let isDraggingObs3D = false;
-        let syncTimeout = null;
         let lastData = null;
 
         const scene = new THREE.Scene();
@@ -200,7 +199,7 @@
         floorMesh.position.set(5, 0, 5);
         scene.add(floorMesh);
 
-        // Car setup: Length along X, width along Z
+        // Car model
         const carGroup = new THREE.Group();
         const carBody = new THREE.Mesh(
             new THREE.BoxGeometry(0.6, 0.2, 0.4),
@@ -360,8 +359,11 @@
                 const newId = Date.now();
                 const w = 1.0, h = 1.0;
 
-                const newXmin = Math.max(0, Math.min(ROOM_SIZE - w, pt.x - w / 2));
-                const newYmin = Math.max(0, Math.min(ROOM_SIZE - h, pt.z - h / 2));
+                const worldX = pt.x;
+                const worldY = ROOM_SIZE - pt.z; // Translate Z to Y world coordinates
+
+                const newXmin = Math.max(0, Math.min(ROOM_SIZE - w, worldX - w / 2));
+                const newYmin = Math.max(0, Math.min(ROOM_SIZE - h, worldY - h / 2));
 
                 obstacles.push({
                     id: newId,
@@ -419,8 +421,9 @@
         }
 
         function render3DScene(data) {
-            carGroup.position.set(data.car_x, 0, data.car_y);
-            carGroup.rotation.y = -data.car_heading;
+            // Map world (X, Y) to 3D (X, 10 - Y)
+            carGroup.position.set(data.car_x, 0, ROOM_SIZE - data.car_y);
+            carGroup.rotation.y = data.car_heading;
 
             obstacleMeshes.forEach(m => scene.remove(m));
             obstacleMeshes = [];
@@ -430,6 +433,10 @@
                 const d = obs.y_max - obs.y_min;
                 const h = 1.2;
 
+                const centerObsX = obs.x_min + w / 2;
+                const centerObsY = obs.y_min + d / 2;
+                const centerObsZ = ROOM_SIZE - centerObsY;
+
                 const geo = new THREE.BoxGeometry(w, h, d);
                 const mat = new THREE.MeshStandardMaterial({
                     color: obs.id === selectedObsId ? 0xff7800 : 0x8b0000,
@@ -437,7 +444,7 @@
                     opacity: 0.85
                 });
                 const mesh = new THREE.Mesh(geo, mat);
-                mesh.position.set(obs.x_min + w / 2, h / 2, obs.y_min + d / 2);
+                mesh.position.set(centerObsX, h / 2, centerObsZ);
                 scene.add(mesh);
                 obstacleMeshes.push(mesh);
             });
@@ -451,8 +458,8 @@
             if (data.all_rays) {
                 data.all_rays.forEach(ray => {
                     const points = [
-                        new THREE.Vector3(data.car_x, 0.1, data.car_y),
-                        new THREE.Vector3(ray.end_x, 0.1, ray.end_y)
+                        new THREE.Vector3(data.car_x, 0.1, ROOM_SIZE - data.car_y),
+                        new THREE.Vector3(ray.end_x, 0.1, ROOM_SIZE - ray.end_y)
                     ];
                     const geo = new THREE.BufferGeometry().setFromPoints(points);
                     const isHit = ray.dist < parseFloat(document.getElementById('max_range').value) * 0.98;
@@ -470,7 +477,7 @@
                     const geo = new THREE.SphereGeometry(0.15, 16, 16);
                     const mat = new THREE.MeshBasicMaterial({ color: idx === data.current_waypoint_idx ? 0xffbd2e : 0x2ea043 });
                     const mesh = new THREE.Mesh(geo, mat);
-                    mesh.position.set(wp[0], 0.15, wp[1]);
+                    mesh.position.set(wp[0], 0.15, ROOM_SIZE - wp[1]);
                     scene.add(mesh);
                     waypointMeshes.push(mesh);
                 });
