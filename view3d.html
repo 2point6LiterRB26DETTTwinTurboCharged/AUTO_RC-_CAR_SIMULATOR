@@ -163,6 +163,10 @@
         const ROOM_SIZE = 10.0;
         const container = document.getElementById('canvas-container');
 
+        // DECLARE DRAGGING STATE GLOBALLY
+        let isDraggingObs3D = false;
+        let syncTimeout = null;
+
         // Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0d1117);
@@ -187,17 +191,16 @@
         dirLight.castShadow = true;
         scene.add(dirLight);
 
-        // Floor Grid
+        // Floor Grid & Invisible Raycast Plane
         const gridHelper = new THREE.GridHelper(ROOM_SIZE, 10, 0x58a6ff, 0x30363d);
         gridHelper.position.set(5, 0, 5);
         scene.add(gridHelper);
 
-        const floorMesh = new THREE.Mesh(
-            new THREE.PlaneGeometry(ROOM_SIZE, ROOM_SIZE),
-            new THREE.MeshStandardMaterial({ color: 0x161b22, side: THREE.DoubleSide })
-        );
-        floorMesh.rotation.x = Math.PI / 2;
-        floorMesh.position.set(5, -0.01, 5);
+        const floorGeo = new THREE.PlaneGeometry(ROOM_SIZE, ROOM_SIZE);
+        const floorMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
+        const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+        floorMesh.rotation.x = -Math.PI / 2;
+        floorMesh.position.set(5, 0, 5);
         scene.add(floorMesh);
 
         // Vehicle Mesh
@@ -238,7 +241,6 @@
         bindSlider('speed', 'val-speed');
         bindSlider('max_range', 'val-range', ' m');
 
-        // Slider bindings for Obstacle Editor
         function populateObjectEditor() {
             const select = document.getElementById('obs_select');
             select.innerHTML = '';
@@ -288,8 +290,13 @@
                 obs.y_min = parseFloat(Math.max(0, centerY - height / 2).toFixed(2));
                 obs.y_max = parseFloat(Math.min(ROOM_SIZE, centerY + height / 2).toFixed(2));
 
-                await syncObstacles();
-                runStep();
+                if (!syncTimeout) {
+                    syncTimeout = setTimeout(async () => {
+                        await syncObstacles();
+                        runStep();
+                        syncTimeout = null;
+                    }, 50);
+                }
             }
         }
 
@@ -323,7 +330,7 @@
             });
         }
 
-        // Drag & Drop Obstacle on 3D View
+        // Drag & Drop Obstacle onto 3D Canvas
         const dragBox = document.getElementById('dragNewObs');
         dragBox.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', 'new_obstacle'));
         container.addEventListener('dragover', (e) => e.preventDefault());
@@ -342,12 +349,15 @@
                 const newId = Date.now();
                 const w = 1.0, h = 1.0;
 
+                const newXmin = Math.max(0, Math.min(ROOM_SIZE - w, pt.x - w / 2));
+                const newYmin = Math.max(0, Math.min(ROOM_SIZE - h, pt.z - h / 2));
+
                 obstacles.push({
                     id: newId,
-                    x_min: Math.max(0, parseFloat((pt.x - w/2).toFixed(2))),
-                    x_max: Math.min(ROOM_SIZE, parseFloat((pt.x + w/2).toFixed(2))),
-                    y_min: Math.max(0, parseFloat((pt.z - h/2).toFixed(2))),
-                    y_max: Math.min(ROOM_SIZE, parseFloat((pt.z + h/2).toFixed(2)))
+                    x_min: parseFloat(newXmin.toFixed(2)),
+                    x_max: parseFloat((newXmin + w).toFixed(2)),
+                    y_min: parseFloat(newYmin.toFixed(2)),
+                    y_max: parseFloat((newYmin + h).toFixed(2))
                 });
 
                 selectedObsId = newId;
@@ -359,6 +369,7 @@
 
         async function runStep() {
             if (isDraggingObs3D) return;
+
             const payload = {
                 speed: parseFloat(document.getElementById('speed').value),
                 num_beams: parseInt(document.getElementById('num_beams').value),
@@ -390,16 +401,15 @@
 
                 update3DScene(data);
             } catch (err) {
-                console.error("3D Step execution error:", err);
+                console.error("3D Step error:", err);
             }
         }
 
         function update3DScene(data) {
-            // Update Car Position & Orientation
             carGroup.position.set(data.car_x, 0, data.car_y);
             carGroup.rotation.y = -data.car_heading + Math.PI / 2;
 
-            // Render Obstacles
+            // Update Obstacle Meshes
             obstacleMeshes.forEach(m => scene.remove(m));
             obstacleMeshes = [];
 
@@ -421,7 +431,7 @@
                 obstacleMeshes.push(mesh);
             });
 
-            // Render LiDAR Rays
+            // Update LiDAR Rays
             rayLines.forEach(l => scene.remove(l));
             rayLines = [];
 
@@ -437,7 +447,7 @@
                 rayLines.push(line);
             });
 
-            // Render Waypoint Markers
+            // Update Waypoints
             waypointMeshes.forEach(w => scene.remove(w));
             waypointMeshes = [];
 

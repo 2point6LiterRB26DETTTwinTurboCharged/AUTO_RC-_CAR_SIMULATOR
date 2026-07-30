@@ -12,7 +12,6 @@
         .control-group { display: flex; flex-direction: column; gap: 4px; }
         .control-group label { font-size: 0.8rem; color: #c9d1d9; display: flex; justify-content: space-between; }
         .control-group input, .control-group select { width: 100%; accent-color: #1f6feb; background: #0d1117; color: white; border: 1px solid #30363d; padding: 5px; border-radius: 4px; font-size: 0.85rem; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .btn { background-color: #238636; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; text-decoration: none; text-align: center; }
         .btn:hover { background-color: #2ea043; }
         .btn-reset { background-color: #da3633; }
@@ -210,6 +209,9 @@
         let dragOffsetMeterX = 0;
         let dragOffsetMeterY = 0;
 
+        let lastData = null; // Store state for instant 60 FPS drag updates
+        let syncTimeout = null;
+
         let isAutoPlaying = false;
         let animationInterval = null;
 
@@ -264,12 +266,12 @@
             zoomLevel = Math.max(0.5, Math.min(4.0, zoomLevel * zoomFactor));
             document.getElementById('zoom_slider').value = zoomLevel.toFixed(1);
             document.getElementById('val-zoom').innerText = zoomLevel.toFixed(1) + 'x';
-            runStep();
+            if (lastData) renderWorld(lastData);
         });
 
         document.getElementById('zoom_slider').addEventListener('input', (e) => {
             zoomLevel = parseFloat(e.target.value);
-            runStep();
+            if (lastData) renderWorld(lastData);
         });
 
         const dragBox = document.getElementById('dragNewObs');
@@ -340,14 +342,12 @@
             }
         });
 
-        let syncTimeout = null;
-
         window.addEventListener('mousemove', (e) => {
             if (isPanning) {
                 wasDragging = true;
                 panX = e.clientX - startPanX;
                 panY = e.clientY - startPanY;
-                renderWorld(lastData); // Redraw locally instantly without hitting API
+                if (lastData) renderWorld(lastData);
                 return;
             }
 
@@ -375,13 +375,11 @@
 
                 populateObjectEditor();
 
-                // 1. Instant local render (no network delay)
                 if (lastData) {
                     lastData.obstacles = obstacles;
                     renderWorld(lastData);
                 }
 
-                // 2. Throttle backend API calls (sync max once every 50ms)
                 if (!syncTimeout) {
                     syncTimeout = setTimeout(async () => {
                         await syncObstacles();
@@ -391,39 +389,12 @@
             }
         });
 
-            if (isDraggingObstacle && draggedObs) {
-                wasDragging = true;
-                const rect = worldCanvas.getBoundingClientRect();
-                const mousePxX = e.clientX - rect.left;
-                const mousePxY = e.clientY - rect.top;
-                const currentMX = toMeterX(mousePxX);
-                const currentMY = toMeterY(mousePxY);
-
-                const width = draggedObs.x_max - draggedObs.x_min;
-                const height = draggedObs.y_max - draggedObs.y_min;
-
-                let newXmin = currentMX - dragOffsetMeterX;
-                let newYmin = currentMY - dragOffsetMeterY;
-
-                newXmin = Math.max(0, Math.min(ROOM_SIZE - width, newXmin));
-                newYmin = Math.max(0, Math.min(ROOM_SIZE - height, newYmin));
-
-                draggedObs.x_min = parseFloat(newXmin.toFixed(2));
-                draggedObs.x_max = parseFloat((newXmin + width).toFixed(2));
-                draggedObs.y_min = parseFloat(newYmin.toFixed(2));
-                draggedObs.y_max = parseFloat((newYmin + height).toFixed(2));
-
-                populateObjectEditor();
-                await syncObstacles();
-                runStep();
-            }
-        });
-
         window.addEventListener('mouseup', () => {
             isPanning = false;
             if (isDraggingObstacle) {
                 isDraggingObstacle = false;
                 draggedObs = null;
+                runStep(); // Execute step once drag finishes
                 setTimeout(() => { wasDragging = false; }, 100);
             }
         });
@@ -463,7 +434,6 @@
             waypoints = []; currentWaypointIdx = 0; runStep();
         });
 
-        // Populate and Sync Object Sizer Sliders
         function populateObjectEditor() {
             const select = document.getElementById('obs_select');
             select.innerHTML = '';
@@ -567,7 +537,8 @@
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
-                
+                lastData = data; // Save for smooth offline dragging
+
                 if (data.obstacles) obstacles = data.obstacles;
                 if (!selectedObsId && obstacles.length) selectedObsId = obstacles[0].id;
                 populateObjectEditor();
@@ -630,12 +601,14 @@
             const carPxX = toPixelX(data.car_x);
             const carPxY = toPixelY(data.car_y);
 
-            data.all_rays.forEach(ray => {
-                ctxWorld.beginPath();
-                ctxWorld.moveTo(carPxX, carPxY);
-                ctxWorld.lineTo(toPixelX(ray.end_x), toPixelY(ray.end_y));
-                ctxWorld.stroke();
-            });
+            if (data.all_rays) {
+                data.all_rays.forEach(ray => {
+                    ctxWorld.beginPath();
+                    ctxWorld.moveTo(carPxX, carPxY);
+                    ctxWorld.lineTo(toPixelX(ray.end_x), toPixelY(ray.end_y));
+                    ctxWorld.stroke();
+                });
+            }
 
             if (waypoints.length > 0) {
                 ctxWorld.strokeStyle = '#ffbd2e';
@@ -676,10 +649,12 @@
 
         function renderMap(data) {
             ctxMap.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-            ctxMap.fillStyle = 'rgba(31, 111, 235, 0.5)';
-            data.map_points.forEach(pt => {
-                ctxMap.fillRect(toPixelX(pt.x), toPixelY(pt.y), 2, 2);
-            });
+            if (data.map_points) {
+                ctxMap.fillStyle = 'rgba(31, 111, 235, 0.5)';
+                data.map_points.forEach(pt => {
+                    ctxMap.fillRect(toPixelX(pt.x), toPixelY(pt.y), 2, 2);
+                });
+            }
 
             ctxMap.fillStyle = '#2ea043';
             ctxMap.beginPath();
