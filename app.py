@@ -134,7 +134,7 @@ def calculate_navigation(
     # ----------------------------------------------------
     status = "NOMINAL - NAVIGATING"
     calc_speed = speed
-    
+
     # Automatically slow down when approaching target to allow tight turns
     if dist_to_target < 1.5:
         calc_speed = speed * max(0.3, dist_to_target / 1.5)
@@ -149,10 +149,10 @@ def calculate_navigation(
 
         obstacle_detected = True
         nearest_obstacle_dist = min(nearest_obstacle_dist, float(dist))
-        
+
         # Turn away from obstacle direction
         turn_dir = -1.0 if rel_angle >= 0 else 1.0
-        
+
         # Front sensors exert higher influence than side/rear sensors
         angle_factor = max(0.1, np.cos(rel_angle)) if abs(rel_angle) < (np.pi / 2) else 0.1
         influence = ((safety_margin - dist) / safety_margin) * angle_factor
