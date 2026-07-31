@@ -69,13 +69,6 @@
         <a href="/3d" class="btn btn-nav">🌐 Switch to 3D View →</a>
 
         <h2>🛠️ Sensor Hardware & Control</h2>
-        <div class="control-group">
-            <label>LiDAR Mode</label>
-            <select id="sensor_mode">
-                <option value="360_sweep">360° Continuous Raycast</option>
-                <option value="4_sensors">4 Discrete ToF Sensors</option>
-            </select>
-        </div>
 
         <div class="control-group" id="ray_count_group">
             <label>Sensor / Ray Count: <span id="val-beams">120</span></label>
@@ -154,34 +147,36 @@
 
         <div class="canvas-container">
             <div class="card">
-                <h3>🌐 2D World View (Left-Click: Add WP | Right-Click: Delete WP)</h3>
+                <h3>🌐 2D World View (Left-Click Box: Select | Click Empty: Add WP | Right-Click: Delete WP)</h3>
                 <canvas id="worldCanvas" width="500" height="500"></canvas>
-                <div class="canvas-hint">Shift+Drag: Pan View | Left-Click: Add Waypoint | Right-Click: Delete WP</div>
+                <div class="canvas-hint">Drag: Shift+Left Click or Middle Click</div>
             </div>
+
             <div class="card">
-                <h3>🗺️ 2D SLAM Point-Cloud Map</h3>
+                <h3>🗺️ SLAM Point Cloud Map</h3>
                 <canvas id="mapCanvas" width="500" height="500"></canvas>
             </div>
         </div>
     </div>
 
     <script>
-        const worldCanvas = document.getElementById('worldCanvas');
-        const mapCanvas = document.getElementById('mapCanvas');
-        const ctxWorld = worldCanvas.getContext('2d');
-        const ctxMap = mapCanvas.getContext('2d');
-        const CANVAS_SIZE = 500;
         const ROOM_SIZE = 10.0;
-        const MIN_WAYPOINT_DIST = 0.35;
+        const CANVAS_SIZE = 500;
+        const worldCanvas = document.getElementById('worldCanvas');
+        const ctxWorld = worldCanvas.getContext('2d');
+        const mapCanvas = document.getElementById('mapCanvas');
+        const ctxMap = mapCanvas.getContext('2d');
 
         let zoomLevel = 1.0;
         let panX = 0, panY = 0;
         let isPanning = false;
         let startPanX = 0, startPanY = 0;
+
         let waypoints = [[8.5, 8.5]];
         let currentWaypointIdx = 0;
         let obstacles = [];
         let selectedObsId = null;
+
         let isAutoPlaying = false;
         let animationInterval = null;
 
@@ -218,39 +213,38 @@
 
         function populateObsSelect() {
             const select = document.getElementById('obs_select');
+            const currentVal = selectedObsId;
             select.innerHTML = '';
             obstacles.forEach(obs => {
                 const opt = document.createElement('option');
                 opt.value = obs.id;
                 opt.innerText = `Obstacle #${obs.id}`;
-                if (obs.id === selectedObsId) opt.selected = true;
+                if (obs.id === currentVal) opt.selected = true;
                 select.appendChild(opt);
             });
-
-            if (!selectedObsId && obstacles.length > 0) {
+            if (obstacles.length > 0 && !obstacles.find(o => o.id === selectedObsId)) {
                 selectedObsId = obstacles[0].id;
-                select.value = selectedObsId;
             }
-            updateObsSlidersFromSelection();
+            syncObsEditorFields();
         }
 
-        function updateObsSlidersFromSelection() {
+        function syncObsEditorFields() {
             const obs = obstacles.find(o => o.id === selectedObsId);
             if (!obs) return;
-            const width = obs.x_max - obs.x_min;
-            const height = obs.y_max - obs.y_min;
-            const xCenter = (obs.x_min + obs.x_max) / 2;
-            const yCenter = (obs.y_min + obs.y_max) / 2;
+            const w = obs.x_max - obs.x_min;
+            const h = obs.y_max - obs.y_min;
+            const cx = obs.x_min + w / 2;
+            const cy = obs.y_min + h / 2;
 
-            document.getElementById('obs_width').value = width.toFixed(1);
-            document.getElementById('obs_height').value = height.toFixed(1);
-            document.getElementById('obs_x').value = xCenter.toFixed(1);
-            document.getElementById('obs_y').value = yCenter.toFixed(1);
+            document.getElementById('obs_width').value = w.toFixed(1);
+            document.getElementById('obs_height').value = h.toFixed(1);
+            document.getElementById('obs_x').value = cx.toFixed(1);
+            document.getElementById('obs_y').value = cy.toFixed(1);
 
-            document.getElementById('val-obs-width').innerText = width.toFixed(2) + ' m';
-            document.getElementById('val-obs-height').innerText = height.toFixed(2) + ' m';
-            document.getElementById('val-obs-x').innerText = xCenter.toFixed(2) + ' m';
-            document.getElementById('val-obs-y').innerText = yCenter.toFixed(2) + ' m';
+            document.getElementById('val-obs-width').innerText = w.toFixed(2) + ' m';
+            document.getElementById('val-obs-height').innerText = h.toFixed(2) + ' m';
+            document.getElementById('val-obs-x').innerText = cx.toFixed(2) + ' m';
+            document.getElementById('val-obs-y').innerText = cy.toFixed(2) + ' m';
         }
 
         async function updateSelectedObstacle() {
@@ -259,6 +253,19 @@
             const h = parseFloat(document.getElementById('obs_height').value);
             const cx = parseFloat(document.getElementById('obs_x').value);
             const cy = parseFloat(document.getElementById('obs_y').value);
+
+            document.getElementById('val-obs-width').innerText = w.toFixed(2) + ' m';
+            document.getElementById('val-obs-height').innerText = h.toFixed(2) + ' m';
+            document.getElementById('val-obs-x').innerText = cx.toFixed(2) + ' m';
+            document.getElementById('val-obs-y').innerText = cy.toFixed(2) + ' m';
+
+            const localObs = obstacles.find(o => o.id === selectedObsId);
+            if (localObs) {
+                localObs.x_min = cx - w / 2;
+                localObs.x_max = cx + w / 2;
+                localObs.y_min = cy - h / 2;
+                localObs.y_max = cy + h / 2;
+            }
 
             await fetch(`/api/obstacles/${selectedObsId}`, {
                 method: 'PUT',
@@ -270,8 +277,7 @@
                     y_max: cy + h / 2
                 })
             });
-            await fetchObstacles();
-            runStep();
+            runStep(false);
         }
 
         function updateWaypointUI() {
@@ -287,109 +293,90 @@
                 item.style.padding = '4px 8px';
                 item.style.borderRadius = '4px';
                 item.style.fontSize = '0.8rem';
-
                 item.innerHTML = `
                     <span>WP #${idx + 1}: (${wp[0].toFixed(1)}, ${wp[1].toFixed(1)})</span>
-                    <button class="btn btn-reset" style="padding: 2px 6px; font-size: 0.7rem;" onclick="removeWaypoint(${idx})">✕</button>
+                    <button class="btn btn-reset" style="padding: 2px 6px; font-size: 0.7rem;" onclick="deleteWaypoint(${idx})">✕</button>
                 `;
                 list.appendChild(item);
             });
-            document.getElementById('waypoints-val').innerText = `${currentWaypointIdx + 1} / ${waypoints.length}`;
+            document.getElementById('waypoints-val').innerText = `${currentWaypointIdx}/${waypoints.length}`;
         }
 
-        function removeWaypoint(idx) {
+        function deleteWaypoint(idx) {
             waypoints.splice(idx, 1);
             if (currentWaypointIdx >= waypoints.length) {
                 currentWaypointIdx = Math.max(0, waypoints.length - 1);
             }
             updateWaypointUI();
-            runStep();
+            runStep(false);
         }
 
-        async function runStep() {
-            const sensorMode = document.getElementById('sensor_mode').value;
-            const numBeams = parseInt(document.getElementById('num_beams').value);
+        async function runStep(move = true) {
+            const num_beams = parseInt(document.getElementById('num_beams').value);
             const speed = parseFloat(document.getElementById('speed').value);
-            const maxRange = parseFloat(document.getElementById('max_range').value);
+            const max_range = parseFloat(document.getElementById('max_range').value);
 
             const response = await fetch('/api/step', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    sensor_mode: sensorMode,
-                    num_beams: numBeams,
-                    speed: speed,
-                    max_range: maxRange,
-                    waypoints: waypoints,
-                    current_waypoint_idx: currentWaypointIdx
+                    sensor_mode: "360_sweep",
+                    num_beams,
+                    speed,
+                    max_range,
+                    waypoints,
+                    move: move
                 })
             });
 
             const data = await response.json();
             currentWaypointIdx = data.current_waypoint_idx;
-            updateWaypointUI();
-
-            document.getElementById('status-val').innerText = data.status;
-            document.getElementById('active-sensors-val').innerText = data.rays.length;
-            const minHit = Math.min(...data.lidar_distances);
-            document.getElementById('sensor-hit-val').innerText = minHit.toFixed(2) + ' m';
-            document.getElementById('collisions-val').innerText = data.collisions || 0;
-
-            renderWorld(data);
-            renderMap(data);
+            render2DWorld(data);
+            renderSLAMMap(data);
         }
 
-        function renderWorld(data) {
+        function render2DWorld(data) {
             ctxWorld.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-            // Draw grid lines
-            ctxWorld.strokeStyle = '#21262d';
+            // GRID
+            ctxWorld.strokeStyle = '#161b22';
             ctxWorld.lineWidth = 1;
-            for (let i = 0; i <= ROOM_SIZE; i++) {
+            for (let i = 0; i <= 10; i++) {
                 ctxWorld.beginPath();
                 ctxWorld.moveTo(toPixelX(i), toPixelY(0));
-                ctxWorld.lineTo(toPixelX(i), toPixelY(ROOM_SIZE));
+                ctxWorld.lineTo(toPixelX(i), toPixelY(10));
                 ctxWorld.stroke();
 
                 ctxWorld.beginPath();
                 ctxWorld.moveTo(toPixelX(0), toPixelY(i));
-                ctxWorld.lineTo(toPixelX(ROOM_SIZE), toPixelY(i));
+                ctxWorld.lineTo(toPixelX(10), toPixelY(i));
                 ctxWorld.stroke();
             }
 
-            // Draw outer border room boundaries
-            ctxWorld.strokeStyle = '#30363d';
-            ctxWorld.lineWidth = 3;
-            ctxWorld.strokeRect(toPixelX(0), toPixelY(ROOM_SIZE), 10.0 * (CANVAS_SIZE / ROOM_SIZE) * zoomLevel, 10.0 * (CANVAS_SIZE / ROOM_SIZE) * zoomLevel);
-
-            // 1. PATH VISUALIZER (Draw route connecting Car -> Active Waypoints)
+            // 1. PATH VISUALIZER (YELLOW)
             if (waypoints.length > 0) {
                 const carPxX = toPixelX(data.car_x);
                 const carPxY = toPixelY(data.car_y);
 
                 ctxWorld.beginPath();
                 ctxWorld.setLineDash([5, 5]);
-                ctxWorld.strokeStyle = '#2ea043';
+                ctxWorld.strokeStyle = '#f1e05a';
                 ctxWorld.lineWidth = 2;
                 ctxWorld.moveTo(carPxX, carPxY);
-
                 for (let i = currentWaypointIdx; i < waypoints.length; i++) {
                     ctxWorld.lineTo(toPixelX(waypoints[i][0]), toPixelY(waypoints[i][1]));
                 }
                 ctxWorld.stroke();
-                ctxWorld.setLineDash([]); // Reset line dash
+                ctxWorld.setLineDash([]);
 
-                // Render Waypoint Markers
                 waypoints.forEach((wp, idx) => {
                     const wpX = toPixelX(wp[0]);
                     const wpY = toPixelY(wp[1]);
                     const isActive = (idx === currentWaypointIdx);
-
-                    ctxWorld.fillStyle = isActive ? '#2ea043' : '#8b949e';
+                    ctxWorld.fillStyle = isActive ? '#f1e05a' : '#8b949e';
                     ctxWorld.beginPath();
                     ctxWorld.arc(wpX, wpY, isActive ? 8 * zoomLevel : 5 * zoomLevel, 0, Math.PI * 2);
                     ctxWorld.fill();
-
                     ctxWorld.fillStyle = '#ffffff';
                     ctxWorld.font = `${Math.max(10, 11 * zoomLevel)}px sans-serif`;
                     ctxWorld.textAlign = 'center';
@@ -405,79 +392,86 @@
                 const w = (obs.x_max - obs.x_min) * (CANVAS_SIZE / ROOM_SIZE) * zoomLevel;
                 const h = (obs.y_max - obs.y_min) * (CANVAS_SIZE / ROOM_SIZE) * zoomLevel;
 
-                ctxWorld.fillStyle = isSelected ? 'rgba(218, 54, 51, 0.45)' : 'rgba(88, 166, 255, 0.35)';
-                ctxWorld.strokeStyle = isSelected ? '#f85149' : '#58a6ff';
-                ctxWorld.lineWidth = isSelected ? 3 : 1.5;
-
+                ctxWorld.fillStyle = isSelected ? 'rgba(255, 120, 0, 0.4)' : 'rgba(218, 54, 51, 0.3)';
+                ctxWorld.strokeStyle = isSelected ? '#ff7800' : '#da3633';
+                ctxWorld.lineWidth = isSelected ? 3 : 2;
                 ctxWorld.fillRect(x1, y1, w, h);
                 ctxWorld.strokeRect(x1, y1, w, h);
             });
 
-            // 3. LIDAR RAYS (Red highlighting on contact / obstacle cuts)
-            const carPxX = toPixelX(data.car_x);
-            const carPxY = toPixelY(data.car_y);
+            // 3. LIDAR RAY VISUALS (MATCH 3D VIEW)
+            const raysToRender = data.all_rays || data.lidar_hits || [];
             const maxRange = parseFloat(document.getElementById('max_range').value);
 
-            if (data.rays) {
-                data.rays.forEach((ray, i) => {
-                    const endPxX = toPixelX(ray.end_x);
-                    const endPxY = toPixelY(ray.end_y);
-                    const dist = data.lidar_distances ? data.lidar_distances[i] : maxRange;
+            if (raysToRender.length > 0) {
+                const carPxX = toPixelX(data.car_x);
+                const carPxY = toPixelY(data.car_y);
 
-                    // Ray is short of max distance if hit obstacle or boundary wall
-                    const isHit = dist < (maxRange - 0.05);
+                raysToRender.forEach(ray => {
+                    const targetX = ray.end_x !== undefined ? ray.end_x : ray.x;
+                    const targetY = ray.end_y !== undefined ? ray.end_y : ray.y;
 
-                    ctxWorld.strokeStyle = isHit ? 'rgba(255, 0, 0, 0.65)' : 'rgba(0, 255, 0, 0.15)';
-                    ctxWorld.lineWidth = isHit ? 1.5 : 1.0;
+                    if (targetX !== undefined && targetY !== undefined) {
+                        const targetPxX = toPixelX(targetX);
+                        const targetPxY = toPixelY(targetY);
+                        const isHit = ray.dist !== undefined ? (ray.dist < maxRange * 0.98) : true;
 
-                    ctxWorld.beginPath();
-                    ctxWorld.moveTo(carPxX, carPxY);
-                    ctxWorld.lineTo(endPxX, endPxY);
-                    ctxWorld.stroke();
-
-                    // Impact point highlight on obstacles
-                    if (isHit) {
-                        ctxWorld.fillStyle = 'rgba(255, 50, 50, 0.9)';
                         ctxWorld.beginPath();
-                        ctxWorld.arc(endPxX, endPxY, 3 * zoomLevel, 0, Math.PI * 2);
-                        ctxWorld.fill();
+                        ctxWorld.strokeStyle = isHit ? 'rgba(255, 51, 51, 0.85)' : 'rgba(88, 166, 255, 0.45)';
+                        ctxWorld.lineWidth = isHit ? 2.2 : 1.2;
+                        ctxWorld.lineCap = 'round';
+                        ctxWorld.moveTo(carPxX, carPxY);
+                        ctxWorld.lineTo(targetPxX, targetPxY);
+                        ctxWorld.stroke();
                     }
                 });
             }
 
-            // 4. CAR RENDERING
-            ctxWorld.fillStyle = '#f0f6fc';
+            // 4. CAR VISUAL (DARK GREY)
+            const carX = toPixelX(data.car_x);
+            const carY = toPixelY(data.car_y);
+
+            ctxWorld.save();
+            ctxWorld.translate(carX, carY);
+            ctxWorld.rotate(-data.car_heading);
+
+            ctxWorld.fillStyle = '#4a4a4a';
             ctxWorld.beginPath();
-            ctxWorld.arc(carPxX, carPxY, 7 * zoomLevel, 0, Math.PI * 2);
+            ctxWorld.arc(0, 0, 10 * zoomLevel, 0, Math.PI * 2);
             ctxWorld.fill();
 
-            const arrowLen = 16 * zoomLevel;
-            const endX = carPxX + arrowLen * Math.cos(-data.car_heading);
-            const endY = carPxY + arrowLen * Math.sin(-data.car_heading);
-            ctxWorld.strokeStyle = '#f85149';
-            ctxWorld.lineWidth = 2.5;
+            ctxWorld.strokeStyle = '#ffffff';
+            ctxWorld.lineWidth = 3;
             ctxWorld.beginPath();
-            ctxWorld.moveTo(carPxX, carPxY);
-            ctxWorld.lineTo(endX, endY);
+            ctxWorld.moveTo(0, 0);
+            ctxWorld.lineTo(15 * zoomLevel, 0);
             ctxWorld.stroke();
+
+            ctxWorld.restore();
+
+            // TELEMETRY
+            document.getElementById('status-val').innerText = data.status || 'NOMINAL';
+            document.getElementById('active-sensors-val').innerText = `${document.getElementById('num_beams').value} Beams`;
+            document.getElementById('sensor-hit-val').innerText = ((data.closest_obstacle || data.min_sensor_hit) || 0.0).toFixed(2) + ' m';
+            document.getElementById('collisions-val').innerText = data.collisions || 0;
+            updateWaypointUI();
         }
 
-        function renderMap(data) {
+        function renderSLAMMap(data) {
             ctxMap.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
             if (data.map_points) {
-                ctxMap.fillStyle = 'rgba(31, 111, 235, 0.5)';
+                ctxMap.fillStyle = '#58a6ff';
                 data.map_points.forEach(pt => {
                     ctxMap.fillRect(toPixelX(pt.x), toPixelY(pt.y), 2, 2);
                 });
             }
-
-            ctxMap.fillStyle = '#2ea043';
+            ctxMap.fillStyle = '#4a4a4a';
             ctxMap.beginPath();
             ctxMap.arc(toPixelX(data.car_x), toPixelY(data.car_y), 5, 0, Math.PI * 2);
             ctxMap.fill();
         }
 
-        // EVENT LISTENERS
+        // EVENT LISTENERS WITH MOUSE BOX SELECTION
         worldCanvas.addEventListener('mousedown', (e) => {
             const rect = worldCanvas.getBoundingClientRect();
             const clickX = e.clientX - rect.left;
@@ -494,49 +488,55 @@
             const simY = Math.min(ROOM_SIZE - 0.2, Math.max(0.2, toSimY(clickY)));
 
             if (e.button === 0) {
-                // Add Waypoint
-                waypoints.push([simX, simY]);
-                updateWaypointUI();
-                runStep();
+                // Check if user clicked on an existing obstacle box
+                const clickedObs = obstacles.find(obs => 
+                    simX >= obs.x_min && simX <= obs.x_max &&
+                    simY >= obs.y_min && simY <= obs.y_max
+                );
+
+                if (clickedObs) {
+                    selectedObsId = clickedObs.id;
+                    populateObsSelect();
+                    runStep(false);
+                } else {
+                    waypoints.push([simX, simY]);
+                    updateWaypointUI();
+                    runStep(false);
+                }
             } else if (e.button === 2) {
-                // Delete nearest Waypoint
-                let nearestIdx = -1;
-                let minDistance = Infinity;
+                e.preventDefault();
+                let closestIdx = -1;
+                let minDist = 0.8;
                 waypoints.forEach((wp, idx) => {
                     const d = Math.hypot(wp[0] - simX, wp[1] - simY);
-                    if (d < minDistance) {
-                        minDistance = d;
-                        nearestIdx = idx;
+                    if (d < minDist) {
+                        minDist = d;
+                        closestIdx = idx;
                     }
                 });
-
-                if (nearestIdx !== -1 && minDistance < MIN_WAYPOINT_DIST) {
-                    removeWaypoint(nearestIdx);
+                if (closestIdx !== -1) {
+                    deleteWaypoint(closestIdx);
                 }
             }
         });
 
+        worldCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
         window.addEventListener('mousemove', (e) => {
             if (isPanning) {
                 const rect = worldCanvas.getBoundingClientRect();
-                const clickX = e.clientX - rect.left;
-                const clickY = e.clientY - rect.top;
-                panX = clickX - startPanX;
-                panY = clickY - startPanY;
-                runStep();
+                panX = (e.clientX - rect.left) - startPanX;
+                panY = (e.clientY - rect.top) - startPanY;
+                runStep(false);
             }
         });
 
-        window.addEventListener('mouseup', () => {
-            isPanning = false;
-        });
-
-        worldCanvas.addEventListener('contextmenu', e => e.preventDefault());
+        window.addEventListener('mouseup', () => isPanning = false);
 
         document.getElementById('zoom_slider').addEventListener('input', (e) => {
             zoomLevel = parseFloat(e.target.value);
             document.getElementById('val-zoom').innerText = zoomLevel.toFixed(1) + 'x';
-            runStep();
+            runStep(false);
         });
 
         document.getElementById('recenterBtn').addEventListener('click', () => {
@@ -545,20 +545,13 @@
             panY = 0;
             document.getElementById('zoom_slider').value = '1.0';
             document.getElementById('val-zoom').innerText = '1.0x';
-            runStep();
-        });
-
-        document.getElementById('clearWaypointsBtn').addEventListener('click', () => {
-            waypoints = [];
-            currentWaypointIdx = 0;
-            updateWaypointUI();
-            runStep();
+            runStep(false);
         });
 
         document.getElementById('obs_select').addEventListener('change', (e) => {
             selectedObsId = parseInt(e.target.value);
-            updateObsSlidersFromSelection();
-            runStep();
+            syncObsEditorFields();
+            runStep(false);
         });
 
         ['obs_width', 'obs_height', 'obs_x', 'obs_y'].forEach(id => {
@@ -566,42 +559,42 @@
         });
 
         document.getElementById('addObsBtn').addEventListener('click', async () => {
-            const newId = obstacles.length > 0 ? Math.max(...obstacles.map(o => o.id)) + 1 : 1;
-            await fetch('/api/obstacles', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    id: newId,
-                    x_min: 4.5,
-                    x_max: 5.5,
-                    y_min: 4.5,
-                    y_max: 5.5
-                })
-            });
+            const newId = Date.now();
+            obstacles.push({ id: newId, x_min: 4.5, x_max: 5.5, y_min: 4.5, y_max: 5.5 });
             selectedObsId = newId;
-            await fetchObstacles();
-            runStep();
+            await syncObstacles();
+            populateObsSelect();
+            runStep(false);
         });
 
         document.getElementById('deleteObsBtn').addEventListener('click', async () => {
-            if (!selectedObsId) return;
-            await fetch(`/api/obstacles/${selectedObsId}`, { method: 'DELETE' });
-            selectedObsId = null;
-            await fetchObstacles();
-            runStep();
+            obstacles = obstacles.filter(o => o.id !== selectedObsId);
+            selectedObsId = obstacles.length ? obstacles[0].id : null;
+            await syncObstacles();
+            populateObsSelect();
+            runStep(false);
         });
 
-        document.getElementById('sensor_mode').addEventListener('change', (e) => {
-            const group = document.getElementById('ray_count_group');
-            group.style.display = e.target.value === '4_sensors' ? 'none' : 'flex';
-            runStep();
+        async function syncObstacles() {
+            await fetch('/api/obstacles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ obstacles })
+            });
+        }
+
+        document.getElementById('clearWaypointsBtn').addEventListener('click', () => {
+            waypoints = [];
+            currentWaypointIdx = 0;
+            updateWaypointUI();
+            runStep(false);
         });
 
         ['num_beams', 'speed', 'max_range'].forEach(id => {
             document.getElementById(id).addEventListener('input', (e) => {
                 const valSpan = document.getElementById('val-' + (id === 'num_beams' ? 'beams' : id === 'speed' ? 'speed' : 'range'));
                 if (valSpan) valSpan.innerText = e.target.value;
-                runStep();
+                runStep(false);
             });
         });
 
@@ -611,7 +604,7 @@
             if (isAutoPlaying) {
                 playBtn.innerText = "Pause ⏸️";
                 playBtn.style.backgroundColor = "#d29922";
-                animationInterval = setInterval(runStep, 100);
+                animationInterval = setInterval(() => runStep(true), 100);
             } else {
                 playBtn.innerText = "Play ▶️";
                 playBtn.style.backgroundColor = "#1f6feb";
@@ -619,7 +612,7 @@
             }
         }
 
-        document.getElementById('stepBtn').addEventListener('click', runStep);
+        document.getElementById('stepBtn').addEventListener('click', () => runStep(true));
         document.getElementById('playBtn').addEventListener('click', togglePlay);
         document.getElementById('resetBtn').addEventListener('click', async () => {
             if (isAutoPlaying) togglePlay();
@@ -627,13 +620,13 @@
             waypoints = [[8.5, 8.5]];
             currentWaypointIdx = 0;
             updateWaypointUI();
-            runStep();
+            runStep(false);
         });
 
         (async function init() {
             await fetchObstacles();
             updateWaypointUI();
-            runStep();
+            runStep(false);
         })();
     </script>
 </body>

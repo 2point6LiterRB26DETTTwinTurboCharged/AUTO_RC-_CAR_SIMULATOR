@@ -214,9 +214,27 @@ def update_obstacles():
         return jsonify({"status": "success", "obstacles": obstacles})
     return jsonify({"obstacles": obstacles})
 
+@app.route("/api/obstacles/<int:obs_id>", methods=["PUT", "DELETE"])
+def item_obstacle(obs_id):
+    global obstacles
+    if request.method == "DELETE":
+        obstacles = [o for o in obstacles if o["id"] != obs_id]
+        return jsonify({"status": "deleted"})
+    elif request.method == "PUT":
+        data = request.json or {}
+        for o in obstacles:
+            if o["id"] == obs_id:
+                o["x_min"] = data.get("x_min", o["x_min"])
+                o["x_max"] = data.get("x_max", o["x_max"])
+                o["y_min"] = data.get("y_min", o["y_min"])
+                o["y_max"] = data.get("y_max", o["y_max"])
+                break
+        return jsonify({"status": "updated"})
+
 @app.route("/api/step", methods=["POST"])
 def step():
     data = request.json or {}
+    move = data.get("move", True)  # Flag to determine whether vehicle moves
     speed = float(data.get("speed", 0.5))
     num_beams = int(data.get("num_beams", 120))
     max_range = float(data.get("max_range", 5.0))
@@ -256,7 +274,7 @@ def step():
 
     lidar_distances_arr = np.array(lidar_distances)
 
-    if float(np.min(lidar_distances_arr)) < 0.25:
+    if move and float(np.min(lidar_distances_arr)) < 0.25:
         sim_state["collisions"] += 1
 
     calc_speed, steering, updated_wp_idx, status_msg = calculate_navigation(
@@ -272,34 +290,36 @@ def step():
         max_range,
     )
 
-    sim_state["current_waypoint_idx"] = updated_wp_idx
-    sim_state["status"] = status_msg
+    # ONLY move the vehicle and update position state if move parameter is True
+    if move:
+        sim_state["current_waypoint_idx"] = updated_wp_idx
+        sim_state["status"] = status_msg
 
-    if status_msg != "DESTINATION REACHED":
-        sim_state["car_heading"] += steering
-        sim_state["car_heading"] = float(np.arctan2(np.sin(sim_state["car_heading"]), np.cos(sim_state["car_heading"])))
+        if status_msg != "DESTINATION REACHED":
+            sim_state["car_heading"] += steering
+            sim_state["car_heading"] = float(np.arctan2(np.sin(sim_state["car_heading"]), np.cos(sim_state["car_heading"])))
 
-    next_x = sim_state["car_x"] + calc_speed * np.cos(sim_state["car_heading"]) * 0.2
-    next_y = sim_state["car_y"] + calc_speed * np.sin(sim_state["car_heading"]) * 0.2
+        next_x = sim_state["car_x"] + calc_speed * np.cos(sim_state["car_heading"]) * 0.2
+        next_y = sim_state["car_y"] + calc_speed * np.sin(sim_state["car_heading"]) * 0.2
 
-    vehicle_radius = 0.25
-    blocked = segment_intersects_obstacle(
-        sim_state["car_x"],
-        sim_state["car_y"],
-        next_x,
-        next_y,
-        obstacles,
-        vehicle_radius,
-    )
+        vehicle_radius = 0.25
+        blocked = segment_intersects_obstacle(
+            sim_state["car_x"],
+            sim_state["car_y"],
+            next_x,
+            next_y,
+            obstacles,
+            vehicle_radius,
+        )
 
-    if not blocked:
-        sim_state["car_x"] = next_x
-        sim_state["car_y"] = next_y
-    else:
-        sim_state["status"] = "BLOCKED BY OBSTACLE"
+        if not blocked:
+            sim_state["car_x"] = next_x
+            sim_state["car_y"] = next_y
+        else:
+            sim_state["status"] = "BLOCKED BY OBSTACLE"
 
-    sim_state["car_x"] = float(np.clip(sim_state["car_x"], 0.5, room_size - 0.5))
-    sim_state["car_y"] = float(np.clip(sim_state["car_y"], 0.5, room_size - 0.5))
+        sim_state["car_x"] = float(np.clip(sim_state["car_x"], 0.5, room_size - 0.5))
+        sim_state["car_y"] = float(np.clip(sim_state["car_y"], 0.5, room_size - 0.5))
 
     return jsonify({
         "car_x": sim_state["car_x"],
